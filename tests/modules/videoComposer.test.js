@@ -50,6 +50,7 @@ describe('VideoComposer', () => {
       expect(videoComposer.ttsService).toBeDefined();
       expect(videoComposer.subtitleGenerator).toBeDefined();
       expect(videoComposer.backgroundMusicService).toBeDefined();
+      expect(videoComposer.stickerService).toBeDefined();
     });
 
     test('should create output and temp directories', () => {

@@ -7,6 +7,7 @@ import VideoSplitter from './videoSplitter.js';
 import TTSService from './ttsService.js';
 import SubtitleGenerator from './subtitleGenerator.js';
 import BackgroundMusicService from './backgroundMusic.js';
+import StickerService from './stickerService.js';
 
 ffmpeg.setFfmpegPath(config.ffmpeg.path);
 ffmpeg.setFfprobePath(config.ffmpeg.ffprobePath);
@@ -39,6 +40,11 @@ class VideoComposer {
       ...options.backgroundMusicOptions,
     });
 
+    this.stickerService = new StickerService({
+      outputDir: this.options.tempDir,
+      ...options.stickerOptions,
+    });
+
     helpers.ensureDirectory(this.options.outputDir);
     helpers.ensureDirectory(this.options.tempDir);
   }
@@ -53,9 +59,12 @@ class VideoComposer {
       addSubtitles = true,
       addBackgroundMusic = true,
       addTTS = true,
+      addStickers = true,
+      stickers = [],
       subtitleOptions = {},
       ttsOptions = {},
       bgmOptions = {},
+      stickerOptions = {},
     } = options;
 
     if (!videoPath) {
@@ -149,6 +158,23 @@ class VideoComposer {
       );
     }
 
+    let stickersAdded = false;
+    if (addStickers && stickers && stickers.length > 0) {
+      console.log('正在添加贴纸...');
+      const videoWithStickersPath = path.join(this.options.tempDir, `video_with_stickers_${helpers.generateUniqueId()}.mp4`);
+      const stickerResult = await this.stickerService.addMultipleStickers(
+        currentVideoPath,
+        stickers,
+        {
+          outputDir: this.options.tempDir,
+          outputFileName: path.basename(videoWithStickersPath),
+          ...stickerOptions,
+        }
+      );
+      currentVideoPath = stickerResult.outputPath;
+      stickersAdded = true;
+    }
+
     if (currentVideoPath !== finalOutputPath) {
       fs.copyFileSync(currentVideoPath, finalOutputPath);
     }
@@ -166,6 +192,7 @@ class VideoComposer {
       ttsAdded: addTTS && textContent,
       subtitlesAdded: addSubtitles && subtitlePath,
       backgroundMusicAdded: addBackgroundMusic && backgroundMusicPath,
+      stickersAdded: stickersAdded,
     };
   }
 
@@ -178,9 +205,12 @@ class VideoComposer {
       addSubtitles = true,
       addBackgroundMusic = true,
       addTTS = true,
+      addStickers = true,
+      stickers = [],
       subtitleOptions = {},
       ttsOptions = {},
       bgmOptions = {},
+      stickerOptions = {},
     } = options;
 
     if (!videoSegments || videoSegments.length === 0) {
@@ -208,9 +238,12 @@ class VideoComposer {
       addSubtitles,
       addBackgroundMusic,
       addTTS,
+      addStickers,
+      stickers,
       subtitleOptions,
       ttsOptions,
       bgmOptions,
+      stickerOptions,
       cleanup: true,
     });
   }
@@ -225,9 +258,12 @@ class VideoComposer {
       addSubtitles = true,
       addBackgroundMusic = true,
       addTTS = true,
+      addStickers = true,
+      stickers = [],
       subtitleOptions = {},
       ttsOptions = {},
       bgmOptions = {},
+      stickerOptions = {},
     } = options;
 
     if (!videoPath) {
@@ -262,9 +298,12 @@ class VideoComposer {
       addSubtitles,
       addBackgroundMusic,
       addTTS,
+      addStickers,
+      stickers,
       subtitleOptions,
       ttsOptions,
       bgmOptions,
+      stickerOptions,
       cleanup: true,
     });
   }

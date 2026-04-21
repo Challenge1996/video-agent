@@ -43,6 +43,11 @@ const config = {
     position: 'bottom',
     marginV: 40,
   },
+  sticker: {
+    defaultOpacity: 1.0,
+    defaultScale: 1.0,
+    defaultPosition: 'top-left',
+  },
 };
 
 export default config;
