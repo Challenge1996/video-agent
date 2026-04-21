@@ -17,10 +17,13 @@ export function generateUniqueId() {
 }
 
 export function formatTimestamp(seconds) {
-  const hrs = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-  const ms = Math.floor((seconds % 1) * 1000);
+  const totalMs = Math.round(seconds * 1000);
+  const hrs = Math.floor(totalMs / 3600000);
+  const remaining = totalMs % 3600000;
+  const mins = Math.floor(remaining / 60000);
+  const remainingAfterMins = remaining % 60000;
+  const secs = Math.floor(remainingAfterMins / 1000);
+  const ms = remainingAfterMins % 1000;
   return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
 }
 

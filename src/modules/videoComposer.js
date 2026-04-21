@@ -230,6 +230,14 @@ class VideoComposer {
       bgmOptions = {},
     } = options;
 
+    if (!videoPath) {
+      throw new Error('必须提供视频路径');
+    }
+
+    if (!fs.existsSync(videoPath)) {
+      throw new Error(`视频文件不存在: ${videoPath}`);
+    }
+
     console.log('正在分割视频...');
     const splitResult = await this.videoSplitter.splitVideo(videoPath, {
       segmentDuration,
