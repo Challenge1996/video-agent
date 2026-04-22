@@ -219,12 +219,18 @@ class BackgroundMusicService {
 
     const volumeReduction = 1 - duckingAmount;
 
+    const fadeInExpr = fadeInStart >= 0 
+      ? `(1-${volumeReduction})*(t-${fadeInStart})/${fadeDuration}+${volumeReduction}`
+      : `(1-${volumeReduction})*(t+${Math.abs(fadeInStart)})/${fadeDuration}+${volumeReduction}`;
+
+    const fadeOutExpr = `(1-${volumeReduction})*(${fadeOutEnd}-t)/${fadeDuration}+${volumeReduction}`;
+
     return `if(between(t,${fadeInStart},${fadeInEnd}),` +
-           `(1-${volumeReduction})*(t-${fadeInStart})/${fadeDuration}+${volumeReduction},` +
+           `${fadeInExpr},` +
            `if(between(t,${fadeInEnd},${fadeOutStart}),` +
            `${volumeReduction},` +
            `if(between(t,${fadeOutStart},${fadeOutEnd}),` +
-           `(1-${volumeReduction})*(${fadeOutEnd}-t)/${fadeDuration}+${volumeReduction},` +
+           `${fadeOutExpr},` +
            `1)))`;
   }
 
