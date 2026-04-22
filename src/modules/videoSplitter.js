@@ -193,6 +193,42 @@ class VideoSplitter {
     fs.writeFileSync(concatFilePath, content, 'utf-8');
     return concatFilePath;
   }
+
+  async getAudioVolume(videoPath) {
+    return new Promise((resolve, reject) => {
+      const command = ffmpeg(videoPath)
+        .outputOptions([
+          '-af', 'volumedetect',
+          '-f', 'null',
+          '-vn',
+        ])
+        .output('-');
+
+      let stderrOutput = '';
+
+      command
+        .on('stderr', (stderrLine) => {
+          stderrOutput += stderrLine + '\n';
+        })
+        .on('end', () => {
+          const meanVolumeMatch = stderrOutput.match(/mean_volume:\s*(-?[\d.]+)/);
+          const maxVolumeMatch = stderrOutput.match(/max_volume:\s*(-?[\d.]+)/);
+          
+          const meanVolume = meanVolumeMatch ? parseFloat(meanVolumeMatch[1]) : null;
+          const maxVolume = maxVolumeMatch ? parseFloat(maxVolumeMatch[1]) : null;
+
+          resolve({
+            meanVolume,
+            maxVolume,
+            hasAudio: meanVolume !== null,
+          });
+        })
+        .on('error', (err) => {
+          reject(new Error(`检测音频音量失败: ${err.message}`));
+        })
+        .run();
+    });
+  }
 }
 
 export default VideoSplitter;
