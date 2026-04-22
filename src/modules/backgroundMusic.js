@@ -63,10 +63,11 @@ class BackgroundMusicService {
         }
 
         const filterComplex = [];
+        const inputStreams = [];
         for (let i = 0; i < loopCount; i++) {
-          filterComplex.push(`[${i}:a]`);
+          inputStreams.push(`[${i}:a]`);
         }
-        filterComplex.push(`concat=n=${loopCount}:v=0:a=1[concatenated]`);
+        filterComplex.push(`${inputStreams.join('')}concat=n=${loopCount}:v=0:a=1[concatenated]`);
 
         const volumeFilter = `[concatenated]volume=${volume}[volumed]`;
         filterComplex.push(volumeFilter);
