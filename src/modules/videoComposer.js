@@ -748,19 +748,6 @@ class VideoComposer {
           mapOptions.push('-map', `${audioTrackIndex}:a:0`);
           outputOptions.push('-metadata:s:a:' + audioMetadataIndex, `title=配音`);
           
-          if (track.volume !== 1.0 || track.delay > 0) {
-            const filters = [];
-            if (track.volume !== 1.0) {
-              filters.push(`volume=${track.volume}`);
-            }
-            if (track.delay > 0) {
-              filters.push(`adelay=${track.delay * 1000}`);
-            }
-            if (filters.length > 0) {
-              outputOptions.push(`-filter:a:${audioMetadataIndex}`, filters.join(','));
-            }
-          }
-          
           audioTrackIndex++;
           audioMetadataIndex++;
         }
@@ -773,19 +760,6 @@ class VideoComposer {
           command = command.input(track.path);
           mapOptions.push('-map', `${audioTrackIndex}:a:0`);
           outputOptions.push('-metadata:s:a:' + audioMetadataIndex, `title=背景音乐`);
-          
-          if (track.volume !== 1.0 || track.delay > 0) {
-            const filters = [];
-            if (track.volume !== 1.0) {
-              filters.push(`volume=${track.volume}`);
-            }
-            if (track.delay > 0) {
-              filters.push(`adelay=${track.delay * 1000}`);
-            }
-            if (filters.length > 0) {
-              outputOptions.push(`-filter:a:${audioMetadataIndex}`, filters.join(','));
-            }
-          }
           
           audioTrackIndex++;
           audioMetadataIndex++;
