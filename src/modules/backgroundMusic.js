@@ -180,13 +180,8 @@ class BackgroundMusicService {
           fadeDuration
         );
 
-        const escapedExpression = volumeExpression.replace(/'/g, "'\\''");
-        filterComplex.push({
-          filter: 'volume',
-          options: `eval='frame':volume='${escapedExpression}'`,
-          inputs: currentStream,
-          outputs: filterName,
-        });
+        const escapedExpression = volumeExpression.replace(/,/g, '\\,');
+        filterComplex.push(`[${currentStream}]volume=eval=frame:volume=${escapedExpression}[${filterName}]`);
         currentStream = filterName;
       }
 
