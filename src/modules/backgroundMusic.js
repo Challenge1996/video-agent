@@ -180,7 +180,13 @@ class BackgroundMusicService {
           fadeDuration
         );
 
-        filterComplex.push(`[${currentStream}]volume=${volumeExpression}[${filterName}]`);
+        const escapedExpression = volumeExpression.replace(/'/g, "'\\''");
+        filterComplex.push({
+          filter: 'volume',
+          options: `eval='frame':volume='${escapedExpression}'`,
+          inputs: currentStream,
+          outputs: filterName,
+        });
         currentStream = filterName;
       }
 
@@ -212,24 +218,32 @@ class BackgroundMusicService {
   }
 
   _createDuckingVolumeExpression(startTime, endTime, duckingAmount, fadeDuration) {
-    const fadeInStart = startTime - fadeDuration;
+    const fadeInStart = Math.max(0, startTime - fadeDuration);
     const fadeInEnd = startTime;
     const fadeOutStart = endTime;
     const fadeOutEnd = endTime + fadeDuration;
 
     const volumeReduction = 1 - duckingAmount;
 
-    const fadeInExpr = fadeInStart >= 0 
-      ? `(1-${volumeReduction})*(t-${fadeInStart})/${fadeDuration}+${volumeReduction}`
-      : `(1-${volumeReduction})*(t+${Math.abs(fadeInStart)})/${fadeDuration}+${volumeReduction}`;
+    const actualFadeInDuration = fadeInEnd - fadeInStart;
 
     const fadeOutExpr = `(1-${volumeReduction})*(${fadeOutEnd}-t)/${fadeDuration}+${volumeReduction}`;
 
-    return `if(between(t,${fadeInStart},${fadeInEnd}),` +
+    if (actualFadeInDuration <= 0) {
+      return `if(between(t, ${fadeInEnd}, ${fadeOutStart}),` +
+             `${volumeReduction},` +
+             `if(between(t, ${fadeOutStart}, ${fadeOutEnd}),` +
+             `${fadeOutExpr},` +
+             `1))`;
+    }
+
+    const fadeInExpr = `(1-${volumeReduction})*(t-${fadeInStart})/${actualFadeInDuration}+${volumeReduction}`;
+
+    return `if(between(t, ${fadeInStart}, ${fadeInEnd}),` +
            `${fadeInExpr},` +
-           `if(between(t,${fadeInEnd},${fadeOutStart}),` +
+           `if(between(t, ${fadeInEnd}, ${fadeOutStart}),` +
            `${volumeReduction},` +
-           `if(between(t,${fadeOutStart},${fadeOutEnd}),` +
+           `if(between(t, ${fadeOutStart}, ${fadeOutEnd}),` +
            `${fadeOutExpr},` +
            `1)))`;
   }

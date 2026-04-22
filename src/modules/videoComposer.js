@@ -151,6 +151,7 @@ class VideoComposer {
           path: r.audioPath,
           volume: config.audio.ttsVolume,
           delay: r.startTime || 0,
+          type: 'tts',
         }));
       audioTracks.push(...ttsAudioTracks);
     }
@@ -171,6 +172,7 @@ class VideoComposer {
         path: bgmResult.outputPath,
         volume: 1.0,
         delay: 0,
+        type: 'bgm',
       });
     }
 
@@ -178,8 +180,8 @@ class VideoComposer {
       console.log('正在将音频添加到视频...');
       const videoWithAudioPath = path.join(this.options.tempDir, `video_with_audio_${helpers.generateUniqueId()}.mp4`);
       
-      const hasTTSAudio = hasTTS && audioTracks.some(t => t.volume === config.audio.ttsVolume);
-      const hasBGMAudio = hasBackgroundMusic && audioTracks.some(t => t.volume === 1.0);
+      const hasTTSAudio = hasTTS && audioTracks.some(t => t.type === 'tts');
+      const hasBGMAudio = hasBackgroundMusic && audioTracks.some(t => t.type === 'bgm');
       
       currentVideoPath = await this._addMultipleAudioTracksToVideo(
         currentVideoPath,
@@ -732,28 +734,32 @@ class VideoComposer {
         outputOptions.push('-metadata:s:a:0', `title=原声`);
         
         if (originalAudioVolume !== 1.0) {
-          outputOptions.push(`-filter:a:0`, `volume=${originalAudioVolume}`);
+          outputOptions.push('-filter:a:0', `volume=${originalAudioVolume}`);
         }
         
         audioMetadataIndex = 1;
       }
 
       if (hasTTSAudio) {
-        const ttsTracks = audioTracks.filter(t => t.volume === config.audio.ttsVolume);
+        const ttsTracks = audioTracks.filter(t => t.type === 'tts');
         
         for (const track of ttsTracks) {
           command = command.input(track.path);
           mapOptions.push('-map', `${audioTrackIndex}:a:0`);
-          
-          if (track.volume !== 1.0) {
-            outputOptions.push(`-filter:a:${audioMetadataIndex}`, `volume=${track.volume}`);
-          }
-          
-          if (track.delay > 0) {
-            outputOptions.push(`-filter:a:${audioMetadataIndex}`, `adelay=${track.delay * 1000}|${track.delay * 1000}`);
-          }
-          
           outputOptions.push('-metadata:s:a:' + audioMetadataIndex, `title=配音`);
+          
+          if (track.volume !== 1.0 || track.delay > 0) {
+            const filters = [];
+            if (track.volume !== 1.0) {
+              filters.push(`volume=${track.volume}`);
+            }
+            if (track.delay > 0) {
+              filters.push(`adelay=${track.delay * 1000}`);
+            }
+            if (filters.length > 0) {
+              outputOptions.push(`-filter:a:${audioMetadataIndex}`, filters.join(','));
+            }
+          }
           
           audioTrackIndex++;
           audioMetadataIndex++;
@@ -761,21 +767,25 @@ class VideoComposer {
       }
 
       if (hasBGMAudio) {
-        const bgmTracks = audioTracks.filter(t => t.volume === 1.0);
+        const bgmTracks = audioTracks.filter(t => t.type === 'bgm');
         
         for (const track of bgmTracks) {
           command = command.input(track.path);
           mapOptions.push('-map', `${audioTrackIndex}:a:0`);
-          
-          if (track.volume !== 1.0) {
-            outputOptions.push(`-filter:a:${audioMetadataIndex}`, `volume=${track.volume}`);
-          }
-          
-          if (track.delay > 0) {
-            outputOptions.push(`-filter:a:${audioMetadataIndex}`, `adelay=${track.delay * 1000}|${track.delay * 1000}`);
-          }
-          
           outputOptions.push('-metadata:s:a:' + audioMetadataIndex, `title=背景音乐`);
+          
+          if (track.volume !== 1.0 || track.delay > 0) {
+            const filters = [];
+            if (track.volume !== 1.0) {
+              filters.push(`volume=${track.volume}`);
+            }
+            if (track.delay > 0) {
+              filters.push(`adelay=${track.delay * 1000}`);
+            }
+            if (filters.length > 0) {
+              outputOptions.push(`-filter:a:${audioMetadataIndex}`, filters.join(','));
+            }
+          }
           
           audioTrackIndex++;
           audioMetadataIndex++;
