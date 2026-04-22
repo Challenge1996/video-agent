@@ -15,6 +15,7 @@ credentials/*.json
 # Output files
 output/
 temp/
+media/
 
 # IDE
 .idea/
