@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import httpx
+import subprocess
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ class MiniMaxTTSResult:
     filename: str
     duration: float
     format: str
+    sample_rate: int = 0
+    word_count: int = 0
     error: Optional[str] = None
 
 
@@ -38,20 +41,46 @@ class MiniMaxTTSService:
             'base_url': options.get('base_url', config.minimax['base_url']),
             'model': options.get('model', config.minimax['model']),
             'voice_id': options.get('voice_id', config.minimax['tts']['voice_id']),
-            'speed': options.get('speed', config.minimax['tts']['speed']),
-            'vol': options.get('vol', config.minimax['tts']['vol']),
-            'pitch': options.get('pitch', config.minimax['tts']['pitch']),
+            'speed': int(options.get('speed', config.minimax['tts']['speed'])),
+            'vol': int(options.get('vol', config.minimax['tts']['vol'])),
+            'pitch': int(options.get('pitch', config.minimax['tts']['pitch'])),
             'emotion': options.get('emotion', config.minimax['tts']['emotion']),
-            'sample_rate': options.get('sample_rate', config.minimax['tts']['sample_rate']),
-            'bitrate': options.get('bitrate', config.minimax['tts']['bitrate']),
+            'sample_rate': int(options.get('sample_rate', config.minimax['tts']['sample_rate'])),
+            'bitrate': int(options.get('bitrate', config.minimax['tts']['bitrate'])),
             'format': options.get('format', config.minimax['tts']['format']),
-            'channel': options.get('channel', config.minimax['tts']['channel']),
+            'channel': int(options.get('channel', config.minimax['tts']['channel'])),
             'output_dir': options.get('output_dir', config.temp_dir),
             **options,
         }
 
     def _get_base_url(self) -> str:
         return self.options['base_url']
+
+    def _build_request_body(self, text: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        request_body = {
+            'model': options.get('model', self.options['model']),
+            'text': text,
+            'stream': False,
+            'voice_setting': {
+                'voice_id': options.get('voice_id', self.options['voice_id']),
+                'speed': int(options.get('speed', self.options['speed'])),
+                'vol': int(options.get('vol', self.options['vol'])),
+                'pitch': int(options.get('pitch', self.options['pitch'])),
+                'emotion': options.get('emotion', self.options['emotion']),
+            },
+            'audio_setting': {
+                'sample_rate': int(options.get('sample_rate', self.options['sample_rate'])),
+                'bitrate': int(options.get('bitrate', self.options['bitrate'])),
+                'format': options.get('format', self.options['format']),
+                'channel': int(options.get('channel', self.options['channel'])),
+            },
+            'subtitle_enable': False,
+        }
+
+        if options.get('pronunciation_dict'):
+            request_body['pronunciation_dict'] = options['pronunciation_dict']
+
+        return request_body
 
     def synthesize_speech(self, text: str, options: Optional[Dict[str, Any]] = None) -> MiniMaxTTSResult:
         options = options or {}
@@ -61,29 +90,7 @@ class MiniMaxTTSService:
 
         helpers.ensure_directory(output_dir)
 
-        request_body = {
-            'model': options.get('model', self.options['model']),
-            'text': text,
-            'stream': False,
-            'output_format': 'url',
-            'voice_setting': {
-                'voice_id': options.get('voice_id', self.options['voice_id']),
-                'speed': options.get('speed', self.options['speed']),
-                'vol': int(options.get('vol', self.options['vol'])),
-                'pitch': int(options.get('pitch', self.options['pitch'])),
-                'emotion': options.get('emotion', self.options['emotion']),
-            },
-            'audio_setting': {
-                'sample_rate': options.get('sample_rate', self.options['sample_rate']),
-                'bitrate': options.get('bitrate', self.options['bitrate']),
-                'format': options.get('format', self.options['format']),
-                'channel': options.get('channel', self.options['channel']),
-            },
-            'subtitle_enable': False,
-        }
-
-        if options.get('pronunciation_dict'):
-            request_body['pronunciation_dict'] = options['pronunciation_dict']
+        request_body = self._build_request_body(text, options)
 
         try:
             base_url = self._get_base_url()
@@ -116,15 +123,29 @@ class MiniMaxTTSService:
                     with open(output_path, 'wb') as f:
                         f.write(audio_buffer)
 
-                audio_info = self._get_audio_info(output_path)
+                sample_rate = int(options.get('sample_rate', self.options['sample_rate']))
+                duration = 0.0
+                word_count = 0
+
+                extra_info = data.get('extra_info', {})
+                if extra_info and extra_info.get('audio_length'):
+                    audio_length = int(extra_info['audio_length'])
+                    if sample_rate > 0:
+                        duration = audio_length / sample_rate
+                    word_count = extra_info.get('word_count', 0)
+                else:
+                    audio_info = self._get_audio_info(output_path)
+                    duration = audio_info['duration']
 
                 return MiniMaxTTSResult(
                     success=True,
                     text=text,
                     audio_path=output_path,
                     filename=output_filename,
-                    duration=audio_info['duration'],
-                    format=self.options['format']
+                    duration=round(duration, 2),
+                    format=self.options['format'],
+                    sample_rate=sample_rate,
+                    word_count=word_count
                 )
         except Exception as error:
             raise Exception(f'MiniMax TTS 合成失败: {str(error)}')
@@ -150,7 +171,9 @@ class MiniMaxTTSService:
                     audio_path=result.audio_path,
                     filename=result.filename,
                     duration=result.duration,
-                    format=result.format
+                    format=result.format,
+                    sample_rate=result.sample_rate,
+                    word_count=result.word_count
                 ))
             except Exception as error:
                 results.append(MiniMaxTTSResult(
@@ -185,9 +208,6 @@ class MiniMaxTTSService:
             raise Exception(f'从 URL 下载音频失败: {str(error)}')
 
     def _get_audio_info(self, audio_path: str) -> Dict[str, Any]:
-        import subprocess
-        import json
-
         ffprobe_path = config.ffmpeg['ffprobe_path']
         cmd = [
             ffprobe_path,
