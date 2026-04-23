@@ -46,3 +46,4 @@ coverage/
 # Build files
 dist/
 build/
+__pycache__/
