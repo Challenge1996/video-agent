@@ -246,7 +246,7 @@ class StickerService:
         cmd = [self.ffmpeg_path, '-y'] + input_args + [
             '-filter_complex', ';'.join(filter_complex),
             '-map', '[out]',
-            '-map', '0:a',
+            '-map', '0:a?',
             '-c:v', 'libx264',
             '-preset', 'medium',
             '-crf', '23',
@@ -385,7 +385,7 @@ class StickerService:
         cmd = [self.ffmpeg_path, '-y'] + input_args + [
             '-filter_complex', ';'.join(filter_complex),
             '-map', f'[{current_video}]',
-            '-map', '0:a',
+            '-map', '0:a?',
             '-c:v', 'libx264',
             '-preset', 'medium',
             '-crf', '23',

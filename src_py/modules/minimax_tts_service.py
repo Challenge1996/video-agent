@@ -69,8 +69,8 @@ class MiniMaxTTSService:
             'voice_setting': {
                 'voice_id': options.get('voice_id', self.options['voice_id']),
                 'speed': options.get('speed', self.options['speed']),
-                'vol': options.get('vol', self.options['vol']),
-                'pitch': options.get('pitch', self.options['pitch']),
+                'vol': int(options.get('vol', self.options['vol'])),
+                'pitch': int(options.get('pitch', self.options['pitch'])),
                 'emotion': options.get('emotion', self.options['emotion']),
             },
             'audio_setting': {

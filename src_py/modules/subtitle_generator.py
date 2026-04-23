@@ -243,10 +243,10 @@ class SubtitleGenerator:
 
         base_offset = offset
         if new_start_time is not None and segments:
-            base_offset = new_start_time - segments[0].start_time
+            base_offset = new_start_time - segments[0].start_time * speed_factor
 
         for segment in segments:
-            adjusted_start_time = (segment.start_time + base_offset) * speed_factor
+            adjusted_start_time = segment.start_time * speed_factor + base_offset
             adjusted_duration = segment.duration * speed_factor
 
             adjusted_segments.append(SubtitleSegment(

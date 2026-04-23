@@ -231,12 +231,15 @@ class VideoSplitter:
 
         return output_path
 
+    def _escape_path_for_ffmpeg(self, path: str) -> str:
+        return path.replace("'", "'\\''")
+
     def _create_concat_file(self, video_paths: List[str]) -> str:
         temp_dir = config.temp_dir
         helpers.ensure_directory(temp_dir)
 
         concat_file_path = os.path.join(temp_dir, f"concat_{helpers.generate_unique_id()}.txt")
-        content = '\n'.join([f"file '{path.replace(\"'\", \"'\\''\")}'" for path in video_paths])
+        content = '\n'.join([f"file '{self._escape_path_for_ffmpeg(path)}'" for path in video_paths])
 
         with open(concat_file_path, 'w', encoding='utf-8') as f:
             f.write(content)
