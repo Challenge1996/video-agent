@@ -43,6 +43,7 @@ class MiniMaxTTSService {
       model: options.model || this.options.model,
       text: text,
       stream: false,
+      output_format: 'url',
       voice_setting: {
         voice_id: options.voiceId || this.options.voiceId,
         speed: options.speed || this.options.speed,
@@ -91,8 +92,12 @@ class MiniMaxTTSService {
         throw new Error('MiniMax API 未返回音频数据');
       }
 
-      const audioBuffer = Buffer.from(audioContent, 'base64');
-      fs.writeFileSync(outputPath, audioBuffer);
+      if (audioContent.startsWith('http://') || audioContent.startsWith('https://')) {
+        await this._downloadAudioFromUrl(audioContent, outputPath);
+      } else {
+        const audioBuffer = Buffer.from(audioContent, 'base64');
+        fs.writeFileSync(outputPath, audioBuffer);
+      }
 
       const audioInfo = await this._getAudioInfo(outputPath);
 
@@ -146,6 +151,20 @@ class MiniMaxTTSService {
       successfulCount: results.filter(r => r.success).length,
       failedCount: results.filter(r => !r.success).length,
     };
+  }
+
+  async _downloadAudioFromUrl(url, outputPath) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`下载音频失败: ${response.status}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      fs.writeFileSync(outputPath, buffer);
+    } catch (error) {
+      throw new Error(`从 URL 下载音频失败: ${error.message}`);
+    }
   }
 
   _getAudioInfo(audioPath) {
