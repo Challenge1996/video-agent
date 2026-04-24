@@ -5,14 +5,14 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 import subprocess
 
-from src_py.config.config import config
-from src_py.utils.helpers import helpers
-from src_py.modules.video_splitter import VideoSplitter
-from src_py.modules.tts_service import TTSService
-from src_py.modules.minimax_tts_service import MiniMaxTTSService
-from src_py.modules.subtitle_generator import SubtitleGenerator
-from src_py.modules.background_music import BackgroundMusicService
-from src_py.modules.sticker_service import StickerService
+from src.config.config import config
+from src.utils.helpers import helpers
+from src.modules.video_splitter import VideoSplitter
+from src.modules.tts_service import TTSService
+from src.modules.minimax_tts_service import MiniMaxTTSService
+from src.modules.subtitle_generator import SubtitleGenerator
+from src.modules.background_music import BackgroundMusicService
+from src.modules.sticker_service import StickerService
 
 
 @dataclass

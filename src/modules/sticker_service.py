@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
-from src_py.config.config import config
-from src_py.utils.helpers import helpers
+from src.config.config import config
+from src.utils.helpers import helpers
 
 
 @dataclass

@@ -7,19 +7,19 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MEDIA_DIR = PROJECT_ROOT / 'media'
-OUTPUT_DIR = PROJECT_ROOT / 'src_py' / 'output'
-TEMP_DIR = PROJECT_ROOT / 'src_py' / 'temp'
+OUTPUT_DIR = PROJECT_ROOT / 'src' / 'output'
+TEMP_DIR = PROJECT_ROOT / 'src' / 'temp'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-from src_py.config.config import config
-from src_py.utils.helpers import helpers
-from src_py.modules.video_splitter import VideoSplitter
-from src_py.modules.subtitle_generator import SubtitleGenerator
-from src_py.modules.background_music import BackgroundMusicService
-from src_py.modules.sticker_service import StickerService
-from src_py.modules.minimax_tts_service import MiniMaxTTSService
+from src.config.config import config
+from src.utils.helpers import helpers
+from src.modules.video_splitter import VideoSplitter
+from src.modules.subtitle_generator import SubtitleGenerator
+from src.modules.background_music import BackgroundMusicService
+from src.modules.sticker_service import StickerService
+from src.modules.minimax_tts_service import MiniMaxTTSService
 
 
 class TestRealVideoSplitter:

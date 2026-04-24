@@ -9,15 +9,15 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.tools import tool
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-from src_py.config.config import config
-from src_py.utils.helpers import helpers
-from src_py.modules.video_splitter import VideoSplitter
-from src_py.modules.tts_service import TTSService
-from src_py.modules.minimax_tts_service import MiniMaxTTSService
-from src_py.modules.subtitle_generator import SubtitleGenerator
-from src_py.modules.background_music import BackgroundMusicService
-from src_py.modules.sticker_service import StickerService
-from src_py.modules.video_composer import VideoComposer
+from src.config.config import config
+from src.utils.helpers import helpers
+from src.modules.video_splitter import VideoSplitter
+from src.modules.tts_service import TTSService
+from src.modules.minimax_tts_service import MiniMaxTTSService
+from src.modules.subtitle_generator import SubtitleGenerator
+from src.modules.background_music import BackgroundMusicService
+from src.modules.sticker_service import StickerService
+from src.modules.video_composer import VideoComposer
 
 
 class AgentState(TypedDict):
@@ -210,7 +210,7 @@ def add_background_music_tool(video_path: str, music_path: str,
         包含处理结果的字典，包括输出文件路径
     """
     try:
-        from src_py.modules.video_composer import VideoComposer
+        from src.modules.video_composer import VideoComposer
         composer = VideoComposer()
 
         video_info = video_splitter_instance.get_video_info(video_path)
