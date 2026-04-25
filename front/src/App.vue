@@ -44,7 +44,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, onUnmounted } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import ChatHeader from './components/ChatHeader.vue'
 import ChatArea from './components/ChatArea.vue'
@@ -64,6 +64,12 @@ const isLoading = ref(false)
 const toasts = ref([])
 const modal = ref(null)
 const pendingModalAction = ref(null)
+
+const ws = ref(null)
+const clientId = ref('client_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9))
+const currentTaskMessageId = ref(null)
+const reconnectAttempts = ref(0)
+const maxReconnectAttempts = ref(5)
 
 let toastId = 0
 
@@ -115,6 +121,141 @@ const fetchAPI = async (endpoint, options = {}) => {
     console.error('API Error:', error)
     throw error
   }
+}
+
+const connectWebSocket = () => {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${protocol}//${window.location.host}/ws/chat/${clientId.value}`
+  
+  console.log('连接 WebSocket:', wsUrl)
+  
+  ws.value = new WebSocket(wsUrl)
+  
+  ws.value.onopen = () => {
+    console.log('WebSocket 连接成功')
+    reconnectAttempts.value = 0
+  }
+  
+  ws.value.onclose = (event) => {
+    console.log('WebSocket 连接关闭:', event.code, event.reason)
+    if (reconnectAttempts.value < maxReconnectAttempts.value) {
+      reconnectAttempts.value++
+      console.log(`尝试重连 (${reconnectAttempts.value}/${maxReconnectAttempts.value})...`)
+      setTimeout(connectWebSocket, 1000 * reconnectAttempts.value)
+    }
+  }
+  
+  ws.value.onerror = (error) => {
+    console.error('WebSocket 错误:', error)
+  }
+  
+  ws.value.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      handleWebSocketMessage(data)
+    } catch (error) {
+      console.error('解析 WebSocket 消息失败:', error)
+    }
+  }
+}
+
+const handleWebSocketMessage = (data) => {
+  console.log('收到 WebSocket 消息:', data)
+  
+  switch (data.type) {
+    case 'pong':
+      break
+      
+    case 'typing':
+      if (data.status === 'start') {
+        isLoading.value = true
+      } else if (data.status === 'stop') {
+        isLoading.value = false
+      }
+      break
+      
+    case 'task_progress':
+      handleTaskProgress(data)
+      break
+      
+    case 'response':
+      handleWebSocketResponse(data)
+      break
+      
+    case 'error':
+      handleWebSocketError(data)
+      break
+      
+    case 'conversations':
+      conversations.value = data.data
+      break
+  }
+}
+
+const handleTaskProgress = (data) => {
+  const { message_id, todo_item, todo_list } = data
+  
+  if (!currentTaskMessageId.value) return
+  
+  const messageIndex = messages.value.findIndex(m => m.id === currentTaskMessageId.value)
+  
+  if (messageIndex === -1) return
+  
+  const message = messages.value[messageIndex]
+  
+  if (todo_list) {
+    message.todoList = todo_list
+  }
+  
+  if (todo_item) {
+    if (!message.todoList) {
+      message.todoList = []
+    }
+    
+    const itemIndex = message.todoList.findIndex(item => item.id === todo_item.id)
+    
+    if (itemIndex !== -1) {
+      message.todoList[itemIndex] = {
+        ...message.todoList[itemIndex],
+        ...todo_item
+      }
+    } else {
+      message.todoList.push(todo_item)
+    }
+  }
+  
+  messages.value = [...messages.value]
+}
+
+const handleWebSocketResponse = (data) => {
+  isLoading.value = false
+  
+  if (currentTaskMessageId.value) {
+    const messageIndex = messages.value.findIndex(m => m.id === currentTaskMessageId.value)
+    if (messageIndex !== -1) {
+      messages.value[messageIndex].content = data.content
+      messages.value[messageIndex].toolResults = data.tool_results || []
+      messages.value = [...messages.value]
+    }
+  }
+  
+  currentTaskMessageId.value = null
+  loadConversations()
+}
+
+const handleWebSocketError = (data) => {
+  isLoading.value = false
+  
+  if (currentTaskMessageId.value) {
+    const messageIndex = messages.value.findIndex(m => m.id === currentTaskMessageId.value)
+    if (messageIndex !== -1) {
+      messages.value[messageIndex].content = '抱歉，发生了错误：' + data.message
+      messages.value = [...messages.value]
+    }
+  }
+  
+  showToast('处理失败: ' + data.message, 'error')
+  currentTaskMessageId.value = null
 }
 
 const loadConversations = async () => {
@@ -169,7 +310,8 @@ const handleSelectChat = async (convId, title) => {
           content: msg.content,
           role: 'assistant',
           time: formatTime(msg.timestamp),
-          toolResults: msg.tool_calls || []
+          toolResults: msg.tool_calls || [],
+          todoList: msg.todo_list || []
         })
       }
     })
@@ -219,41 +361,60 @@ const handleSendMessage = async () => {
     time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   })
   
+  const assistantMessageId = Date.now() + 1
+  currentTaskMessageId.value = assistantMessageId
+  messages.value.push({
+    id: assistantMessageId,
+    content: '',
+    role: 'assistant',
+    time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+    toolResults: [],
+    todoList: []
+  })
+  
   isLoading.value = true
   
-  try {
-    const response = await fetchAPI('/chat', {
-      method: 'POST',
-      body: {
-        message: message,
-        conversation_id: currentConversationId.value,
-        auto_execute_tools: true
+  if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+    ws.value.send(JSON.stringify({
+      type: 'chat',
+      message: message,
+      conversation_id: currentConversationId.value,
+      auto_execute_tools: true,
+      message_id: assistantMessageId
+    }))
+  } else {
+    try {
+      const response = await fetchAPI('/chat', {
+        method: 'POST',
+        body: {
+          message: message,
+          conversation_id: currentConversationId.value,
+          auto_execute_tools: true
+        }
+      })
+      
+      const messageIndex = messages.value.findIndex(m => m.id === assistantMessageId)
+      if (messageIndex !== -1) {
+        messages.value[messageIndex].content = response.content
+        messages.value[messageIndex].toolResults = response.tool_results || []
+        messages.value[messageIndex].todoList = response.todo_list || []
+        messages.value = [...messages.value]
       }
-    })
-    
-    const assistantMessageId = Date.now() + 1
-    messages.value.push({
-      id: assistantMessageId,
-      content: response.content,
-      role: 'assistant',
-      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-      toolResults: response.tool_results || []
-    })
-    
-    currentChatTitle.value = message.substring(0, 30) + (message.length > 30 ? '...' : '')
-    loadConversations()
-    
-  } catch (error) {
-    const errorMessageId = Date.now() + 1
-    messages.value.push({
-      id: errorMessageId,
-      content: '抱歉，发生了错误：' + error.message,
-      role: 'assistant',
-      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    })
-    showToast('发送消息失败: ' + error.message, 'error')
-  } finally {
-    isLoading.value = false
+      
+      currentChatTitle.value = message.substring(0, 30) + (message.length > 30 ? '...' : '')
+      loadConversations()
+      
+    } catch (error) {
+      const messageIndex = messages.value.findIndex(m => m.id === assistantMessageId)
+      if (messageIndex !== -1) {
+        messages.value[messageIndex].content = '抱歉，发生了错误：' + error.message
+        messages.value = [...messages.value]
+      }
+      showToast('发送消息失败: ' + error.message, 'error')
+    } finally {
+      isLoading.value = false
+      currentTaskMessageId.value = null
+    }
   }
 }
 
@@ -283,9 +444,25 @@ const initParticles = () => {
   }
 }
 
+const sendPing = () => {
+  if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+    ws.value.send(JSON.stringify({ type: 'ping' }))
+  }
+}
+
 onMounted(() => {
   initParticles()
   loadConversations()
+  connectWebSocket()
+  
+  setInterval(sendPing, 30000)
+  
   console.log('🎬 视频剪辑 Agent 前端初始化完成')
+})
+
+onUnmounted(() => {
+  if (ws.value) {
+    ws.value.close()
+  }
 })
 </script>

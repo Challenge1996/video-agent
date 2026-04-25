@@ -1,8 +1,8 @@
 import os
 import json
 import asyncio
-from typing import List, Dict, Any, Optional, TypedDict, Annotated
-from dataclasses import dataclass, asdict
+from typing import List, Dict, Any, Optional, TypedDict, Annotated, Callable
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 import operator
 
@@ -40,6 +40,14 @@ from src.agents.intent_router import (
     IntentResult,
     IntentType,
     ToolExecutionResult,
+)
+from src.agents.task_progress_manager import (
+    TaskProgressManager,
+    TaskProgress,
+    TodoItem,
+    TodoStatus,
+    ProgressCallback,
+    get_task_progress_manager,
 )
 
 
@@ -503,7 +511,9 @@ class ChatResponse:
     content: str
     tool_calls: List[Dict[str, Any]] = None
     tool_results: List[Dict[str, Any]] = None
+    todo_list: List[Dict[str, Any]] = None
     conversation_id: str = None
+    task_id: str = None
     is_complete: bool = True
 
 
@@ -514,11 +524,13 @@ class SmartVideoEditorAgent:
         conversation_manager: Optional[ConversationManager] = None,
         intent_router: Optional[IntentRouter] = None,
         tool_executor: Optional[ToolExecutor] = None,
+        task_progress_manager: Optional[TaskProgressManager] = None,
     ):
         self.llm_service = llm_service or get_llm_service()
         self.conversation_manager = conversation_manager or get_conversation_manager()
         self.intent_router = intent_router or get_intent_router()
         self.tool_executor = tool_executor or get_tool_executor()
+        self.task_progress_manager = task_progress_manager or get_task_progress_manager()
         
         self.conversation_manager.set_system_prompt(VIDEO_EDITOR_SYSTEM_PROMPT)
         
@@ -532,6 +544,8 @@ class SmartVideoEditorAgent:
         self.background_music_service = background_music_service_instance
         self.sticker_service = sticker_service_instance
         self.video_composer = video_composer_instance
+        
+        self._current_task: Optional[TaskProgress] = None
 
     def create_conversation(self, title: str = "新对话") -> str:
         conversation = self.conversation_manager.create_conversation(title=title)
@@ -546,11 +560,63 @@ class SmartVideoEditorAgent:
     def delete_conversation(self, conversation_id: str) -> bool:
         return self.conversation_manager.delete_conversation(conversation_id)
 
+    def _get_tool_display_name(self, tool_name: str) -> str:
+        tool_names = {
+            'split_video_tool': '分割视频',
+            'get_video_info_tool': '获取视频信息',
+            'generate_tts_tool': '生成语音(TTS)',
+            'generate_subtitles_tool': '生成字幕',
+            'add_background_music_tool': '添加背景音乐',
+            'add_sticker_tool': '添加贴纸',
+            'compose_video_tool': '合成视频',
+            'merge_videos_tool': '合并视频',
+            'get_audio_info_tool': '获取音频信息',
+        }
+        return tool_names.get(tool_name, tool_name)
+
+    def _generate_task_from_tool_calls(
+        self,
+        tool_calls: List[Dict[str, Any]],
+        conversation_id: str,
+        message_id: Optional[str] = None,
+    ) -> TaskProgress:
+        task = self.task_progress_manager.create_task(
+            title="视频编辑任务",
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+        
+        for tool_call in tool_calls:
+            tool_name = tool_call.get('name', '')
+            tool_params = tool_call.get('args', {})
+            display_name = self._get_tool_display_name(tool_name)
+            
+            todo_title = display_name
+            if tool_params.get('video_path'):
+                todo_title += f" - {os.path.basename(tool_params['video_path'])}"
+            elif tool_params.get('text'):
+                text_preview = tool_params['text'][:30] + ('...' if len(tool_params['text']) > 30 else '')
+                todo_title += f" - \"{text_preview}\""
+            
+            self.task_progress_manager.add_todo(
+                task_id=task.task_id,
+                title=todo_title,
+                status=TodoStatus.PENDING,
+                metadata={
+                    'tool_name': tool_name,
+                    'tool_params': tool_params,
+                    'tool_call_id': tool_call.get('id'),
+                }
+            )
+        
+        return task
+
     async def chat(
         self,
         user_input: str,
         conversation_id: Optional[str] = None,
         auto_execute_tools: bool = True,
+        message_id: Optional[str] = None,
     ) -> ChatResponse:
         if conversation_id:
             conversation = self.conversation_manager.get_conversation(conversation_id)
@@ -606,12 +672,29 @@ class SmartVideoEditorAgent:
 
         tool_calls = llm_response.tool_calls or []
         tool_results = []
+        task: Optional[TaskProgress] = None
+
+        if tool_calls:
+            task = self._generate_task_from_tool_calls(
+                tool_calls=tool_calls,
+                conversation_id=conversation_id,
+                message_id=message_id,
+            )
+            self._current_task = task
 
         if tool_calls and auto_execute_tools:
-            for tool_call in tool_calls:
+            for idx, tool_call in enumerate(tool_calls):
                 tool_name = tool_call['name']
                 tool_params = tool_call['args']
                 tool_call_id = tool_call['id']
+                
+                todo_item = task.todos[idx] if task and idx < len(task.todos) else None
+                
+                if todo_item:
+                    self.task_progress_manager.start_todo(
+                        task_id=task.task_id,
+                        todo_id=todo_item.id,
+                    )
 
                 execution_result = await self.tool_executor.execute_tool(
                     tool_name,
@@ -637,13 +720,33 @@ class SmartVideoEditorAgent:
                     'error': execution_result.error,
                 })
 
+                if todo_item:
+                    if execution_result.success:
+                        self.task_progress_manager.complete_todo(
+                            task_id=task.task_id,
+                            todo_id=todo_item.id,
+                            result=execution_result.result,
+                        )
+                    else:
+                        self.task_progress_manager.fail_todo(
+                            task_id=task.task_id,
+                            todo_id=todo_item.id,
+                            error=execution_result.error or "未知错误",
+                        )
+
             updated_messages = conversation.get_langchain_messages()
             final_response = await self.llm_service.chat(updated_messages)
+
+            todo_list = None
+            if task:
+                todo_list = [todo.to_dict() for todo in task.todos]
 
             response = ChatResponse(
                 content=final_response.content,
                 tool_calls=tool_calls,
                 tool_results=tool_results,
+                todo_list=todo_list,
+                task_id=task.task_id if task else None,
                 conversation_id=conversation_id,
                 is_complete=True,
             )
@@ -651,15 +754,22 @@ class SmartVideoEditorAgent:
             self.conversation_manager.add_assistant_message(
                 conversation_id,
                 response.content,
+                todo_list=todo_list,
             )
 
             self._update_context_from_results(conversation_id, tool_results)
 
             return response
 
+        todo_list = None
+        if task:
+            todo_list = [todo.to_dict() for todo in task.todos]
+
         response = ChatResponse(
             content=llm_response.content,
             tool_calls=tool_calls,
+            todo_list=todo_list,
+            task_id=task.task_id if task else None,
             conversation_id=conversation_id,
             is_complete=not tool_calls,
         )
@@ -669,6 +779,7 @@ class SmartVideoEditorAgent:
                 conversation_id,
                 llm_response.content,
                 tool_calls=tool_calls,
+                todo_list=todo_list,
             )
 
         return response

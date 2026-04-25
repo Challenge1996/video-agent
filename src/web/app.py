@@ -31,6 +31,13 @@ from src.agents.conversation_manager import (
     ConversationMessage,
     MessageRole,
 )
+from src.agents.task_progress_manager import (
+    get_task_progress_manager,
+    TaskProgress,
+    TodoItem,
+    TodoStatus,
+    ProgressCallback,
+)
 from src.config.config import config
 
 
@@ -185,6 +192,8 @@ async def chat(request: ChatRequest):
             "conversation_id": response.conversation_id,
             "tool_calls": response.tool_calls,
             "tool_results": response.tool_results,
+            "todo_list": response.todo_list,
+            "task_id": response.task_id,
             "is_complete": response.is_complete,
         })
     except Exception as e:
@@ -242,6 +251,7 @@ async def get_conversation(conversation_id: str):
                 "content": msg.content,
                 "timestamp": msg.timestamp.isoformat(),
                 "tool_calls": msg.tool_calls,
+                "todo_list": msg.todo_list,
             }
             for msg in conversation.messages
         ],
@@ -286,6 +296,34 @@ async def execute_tool(request: ToolExecuteRequest):
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     await manager.connect(websocket, client_id)
     agent = get_smart_agent()
+    task_progress_manager = get_task_progress_manager()
+    
+    progress_callback: Optional[ProgressCallback] = None
+    event_loop = asyncio.get_event_loop()
+    
+    async def send_task_progress_async(cid: str, task: TaskProgress, todo: TodoItem):
+        todo_list_data = [t.to_dict() for t in task.todos]
+        
+        await manager.send_message(cid, {
+            "type": "task_progress",
+            "message_id": task.message_id,
+            "task_id": task.task_id,
+            "conversation_id": task.conversation_id,
+            "todo_item": todo.to_dict(),
+            "todo_list": todo_list_data,
+        })
+    
+    def create_progress_callback(cid: str, loop):
+        def callback(task: TaskProgress, todo: TodoItem):
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    send_task_progress_async(cid, task, todo),
+                    loop
+                )
+            except Exception as e:
+                print(f"发送进度更新失败: {e}")
+        
+        return callback
     
     try:
         while True:
@@ -299,17 +337,25 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 user_message = data.get("message", "")
                 conversation_id = data.get("conversation_id")
                 auto_execute = data.get("auto_execute_tools", True)
+                message_id = data.get("message_id")
                 
                 await manager.send_message(client_id, {
                     "type": "typing",
                     "status": "start"
                 })
                 
+                if progress_callback:
+                    task_progress_manager.unregister_callback(progress_callback)
+                
+                progress_callback = create_progress_callback(client_id, event_loop)
+                task_progress_manager.register_callback(progress_callback)
+                
                 try:
                     response = await agent.chat(
                         user_input=user_message,
                         conversation_id=conversation_id,
                         auto_execute_tools=auto_execute,
+                        message_id=message_id,
                     )
                     
                     await manager.send_message(client_id, {
@@ -323,6 +369,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         "conversation_id": response.conversation_id,
                         "tool_calls": response.tool_calls,
                         "tool_results": response.tool_results,
+                        "todo_list": response.todo_list,
+                        "task_id": response.task_id,
                     })
                     
                 except Exception as e:
@@ -334,6 +382,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         "type": "error",
                         "message": str(e)
                     })
+                
+                finally:
+                    if progress_callback:
+                        task_progress_manager.unregister_callback(progress_callback)
+                        progress_callback = None
             
             elif message_type == "get_conversations":
                 conv_manager = get_conversation_manager()
@@ -353,7 +406,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 })
     
     except WebSocketDisconnect:
+        if progress_callback:
+            task_progress_manager.unregister_callback(progress_callback)
         manager.disconnect(client_id)
     except Exception as e:
         print(f"WebSocket 错误: {e}")
+        if progress_callback:
+            task_progress_manager.unregister_callback(progress_callback)
         manager.disconnect(client_id)

@@ -24,6 +24,7 @@ class ConversationMessage:
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     tool_name: Optional[str] = None
+    todo_list: Optional[List[Dict[str, Any]]] = None
     metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -119,6 +120,7 @@ class Conversation:
         tool_calls: Optional[List[Dict[str, Any]]] = None,
         tool_call_id: Optional[str] = None,
         tool_name: Optional[str] = None,
+        todo_list: Optional[List[Dict[str, Any]]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> ConversationMessage:
         message = ConversationMessage(
@@ -129,6 +131,7 @@ class Conversation:
             tool_calls=tool_calls,
             tool_call_id=tool_call_id,
             tool_name=tool_name,
+            todo_list=todo_list,
             metadata=metadata,
         )
         self.messages.append(message)
@@ -209,6 +212,7 @@ class ConversationManager:
         conversation_id: str,
         content: str,
         tool_calls: Optional[List[Dict[str, Any]]] = None,
+        todo_list: Optional[List[Dict[str, Any]]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[ConversationMessage]:
         conversation = self.get_conversation(conversation_id)
@@ -218,6 +222,7 @@ class ConversationManager:
             role=MessageRole.ASSISTANT,
             content=content,
             tool_calls=tool_calls,
+            todo_list=todo_list,
             metadata=metadata,
         )
 

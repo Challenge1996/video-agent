@@ -47,6 +47,16 @@ from src.agents.intent_router import (
     ToolExecutionResult,
 )
 
+from src.agents.task_progress_manager import (
+    TaskProgressManager,
+    TaskProgress,
+    TodoItem,
+    TodoStatus,
+    ProgressCallback,
+    get_task_progress_manager,
+    create_task_progress_manager,
+)
+
 __all__ = [
     'VideoEditorAgent',
     'SmartVideoEditorAgent',
@@ -85,4 +95,11 @@ __all__ = [
     'IntentType',
     'IntentResult',
     'ToolExecutionResult',
+    'TaskProgressManager',
+    'TaskProgress',
+    'TodoItem',
+    'TodoStatus',
+    'ProgressCallback',
+    'get_task_progress_manager',
+    'create_task_progress_manager',
 ]
