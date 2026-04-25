@@ -63,10 +63,11 @@ class BackgroundMusicService {
         }
 
         const filterComplex = [];
+        const inputStreams = [];
         for (let i = 0; i < loopCount; i++) {
-          filterComplex.push(`[${i}:a]`);
+          inputStreams.push(`[${i}:a]`);
         }
-        filterComplex.push(`concat=n=${loopCount}:v=0:a=1[concatenated]`);
+        filterComplex.push(`${inputStreams.join('')}concat=n=${loopCount}:v=0:a=1[concatenated]`);
 
         const volumeFilter = `[concatenated]volume=${volume}[volumed]`;
         filterComplex.push(volumeFilter);
@@ -180,13 +181,8 @@ class BackgroundMusicService {
           fadeDuration
         );
 
-        const escapedExpression = volumeExpression.replace(/'/g, "'\\''");
-        filterComplex.push({
-          filter: 'volume',
-          options: `eval='frame':volume='${escapedExpression}'`,
-          inputs: currentStream,
-          outputs: filterName,
-        });
+        const escapedExpression = volumeExpression.replace(/,/g, '\\,');
+        filterComplex.push(`[${currentStream}]volume=eval=frame:volume=${escapedExpression}[${filterName}]`);
         currentStream = filterName;
       }
 
