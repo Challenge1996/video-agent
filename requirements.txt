@@ -12,6 +12,7 @@ langchain-core>=0.1.0
 
 # LLM 提供商
 langchain-openai>=0.1.0  # OpenAI 支持
+anthropic>=0.18.0  # Anthropic 兼容 API（用于 MiniMax）
 # langchain-anthropic>=0.1.0  # Anthropic Claude 支持（可选）
 
 # Web 服务

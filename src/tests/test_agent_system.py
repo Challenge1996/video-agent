@@ -222,7 +222,7 @@ class TestLLMService:
         """测试获取默认配置"""
         config = get_default_llm_config()
         
-        assert config.provider in [LLMProvider.OPENAI, LLMProvider.ANTHROPIC]
+        assert config.provider in [LLMProvider.OPENAI, LLMProvider.ANTHROPIC, LLMProvider.MINIMAX]
         assert config.temperature >= 0.0
         assert config.temperature <= 2.0
         assert config.max_tokens > 0
