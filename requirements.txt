@@ -10,12 +10,26 @@ langchain>=0.1.0
 langgraph>=0.0.20
 langchain-core>=0.1.0
 
-# TTS 服务（可选）
-# google-cloud-text-to-speech>=5.0.0  # Google TTS 可选
+# LLM 提供商
+langchain-openai>=0.1.0  # OpenAI 支持
+# langchain-anthropic>=0.1.0  # Anthropic Claude 支持（可选）
+
+# Web 服务
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-multipart>=0.0.6
+
+# WebSocket 支持
+websockets>=12.0
 
 # 测试
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
 
 # 工具
 pydantic>=2.0.0
+pydantic-settings>=2.1.0
+
+# 异步支持
+aiohttp>=3.9.0

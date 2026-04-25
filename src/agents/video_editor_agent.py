@@ -1,13 +1,15 @@
 import os
+import json
+import asyncio
 from typing import List, Dict, Any, Optional, TypedDict, Annotated
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 import operator
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
-from langchain_core.tools import tool
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.tools import tool as langchain_tool
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 from src.config.config import config
 from src.utils.helpers import helpers
@@ -18,6 +20,56 @@ from src.modules.subtitle_generator import SubtitleGenerator
 from src.modules.background_music import BackgroundMusicService
 from src.modules.sticker_service import StickerService
 from src.modules.video_composer import VideoComposer
+
+from src.agents.llm_service import (
+    LLMService,
+    get_llm_service,
+    LLMResponse,
+)
+from src.agents.conversation_manager import (
+    ConversationManager,
+    get_conversation_manager,
+    Conversation,
+    MessageRole,
+)
+from src.agents.intent_router import (
+    IntentRouter,
+    get_intent_router,
+    ToolExecutor,
+    get_tool_executor,
+    IntentResult,
+    IntentType,
+    ToolExecutionResult,
+)
+
+
+VIDEO_EDITOR_SYSTEM_PROMPT = """你是一个专业的视频编辑助手，可以帮助用户完成各种视频编辑任务。
+
+你拥有以下能力：
+1. **获取视频信息** - 查看视频的时长、分辨率、帧率等信息
+2. **分割视频** - 将长视频分割成多个片段
+3. **合并视频** - 将多个视频片段合并成一个
+4. **生成语音（TTS）** - 将文本转换为语音
+5. **生成字幕** - 从文本生成 SRT 格式字幕
+6. **添加背景音乐** - 为视频添加背景音乐
+7. **添加贴纸** - 为视频添加静态或动态贴纸
+8. **一键合成视频** - 同时添加 TTS 语音、字幕、背景音乐和贴纸（推荐使用）
+
+**工作流程：**
+1. 分析用户的需求
+2. 如果需要更多信息，向用户询问
+3. 选择合适的工具来执行任务
+4. 执行工具并向用户报告结果
+
+**注意事项：**
+- 对于视频路径，确保用户提供的是正确的绝对路径或相对路径
+- 对于 compose_video_tool，这是最强大的工具，可以一次性完成多项操作，优先推荐使用
+- 如果用户的需求涉及多个步骤，可以建议使用 compose_video_tool
+
+**贴纸位置选项：**
+top-left, top, top-right, middle-left, middle, middle-right, bottom-left, bottom, bottom-right
+
+请用友好、专业的中文回答用户的问题。"""
 
 
 class AgentState(TypedDict):
@@ -30,6 +82,7 @@ class AgentState(TypedDict):
     current_step: Optional[str]
     results: Dict[str, Any]
     errors: Annotated[List[str], operator.add]
+    conversation_id: Optional[str]
 
 
 video_splitter_instance = VideoSplitter()
@@ -40,7 +93,7 @@ sticker_service_instance = StickerService()
 video_composer_instance = VideoComposer()
 
 
-@tool
+@langchain_tool
 def split_video_tool(video_path: str, segment_duration: int = 30) -> Dict[str, Any]:
     """
     将视频分割成多个片段。
@@ -79,7 +132,7 @@ def split_video_tool(video_path: str, segment_duration: int = 30) -> Dict[str, A
         return {'success': False, 'error': str(e)}
 
 
-@tool
+@langchain_tool
 def get_video_info_tool(video_path: str) -> Dict[str, Any]:
     """
     获取视频文件的详细信息。
@@ -109,7 +162,7 @@ def get_video_info_tool(video_path: str) -> Dict[str, Any]:
         return {'success': False, 'error': str(e)}
 
 
-@tool
+@langchain_tool
 def generate_tts_tool(text: str, output_path: Optional[str] = None,
                        voice_id: Optional[str] = None, speed: float = 1.0) -> Dict[str, Any]:
     """
@@ -144,7 +197,7 @@ def generate_tts_tool(text: str, output_path: Optional[str] = None,
         return {'success': False, 'error': str(e)}
 
 
-@tool
+@langchain_tool
 def generate_subtitles_tool(text: str, output_path: Optional[str] = None,
                              total_duration: Optional[float] = None) -> Dict[str, Any]:
     """
@@ -194,7 +247,7 @@ def generate_subtitles_tool(text: str, output_path: Optional[str] = None,
         return {'success': False, 'error': str(e)}
 
 
-@tool
+@langchain_tool
 def add_background_music_tool(video_path: str, music_path: str,
                                 volume: float = 0.3, output_path: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -255,7 +308,7 @@ def add_background_music_tool(video_path: str, music_path: str,
         return {'success': False, 'error': str(e)}
 
 
-@tool
+@langchain_tool
 def add_sticker_tool(video_path: str, sticker_path: str,
                       position: str = 'bottom-right', scale: float = 1.0,
                       opacity: float = 1.0, start_seconds: float = 0.0,
@@ -317,7 +370,7 @@ def add_sticker_tool(video_path: str, sticker_path: str,
         return {'success': False, 'error': str(e)}
 
 
-@tool
+@langchain_tool
 def compose_video_tool(video_path: str,
                         text_content: Optional[str] = None,
                         background_music_path: Optional[str] = None,
@@ -383,7 +436,7 @@ def compose_video_tool(video_path: str,
         return {'success': False, 'error': str(e)}
 
 
-@tool
+@langchain_tool
 def merge_videos_tool(video_paths: List[str], output_path: str) -> Dict[str, Any]:
     """
     合并多个视频文件。
@@ -406,7 +459,7 @@ def merge_videos_tool(video_paths: List[str], output_path: str) -> Dict[str, Any
         return {'success': False, 'error': str(e)}
 
 
-@tool
+@langchain_tool
 def get_audio_info_tool(audio_path: str) -> Dict[str, Any]:
     """
     获取音频文件的详细信息。
@@ -445,93 +498,270 @@ tools = [
 ]
 
 
+@dataclass
+class ChatResponse:
+    content: str
+    tool_calls: List[Dict[str, Any]] = None
+    tool_results: List[Dict[str, Any]] = None
+    conversation_id: str = None
+    is_complete: bool = True
+
+
+class SmartVideoEditorAgent:
+    def __init__(
+        self,
+        llm_service: Optional[LLMService] = None,
+        conversation_manager: Optional[ConversationManager] = None,
+        intent_router: Optional[IntentRouter] = None,
+        tool_executor: Optional[ToolExecutor] = None,
+    ):
+        self.llm_service = llm_service or get_llm_service()
+        self.conversation_manager = conversation_manager or get_conversation_manager()
+        self.intent_router = intent_router or get_intent_router()
+        self.tool_executor = tool_executor or get_tool_executor()
+        
+        self.conversation_manager.set_system_prompt(VIDEO_EDITOR_SYSTEM_PROMPT)
+        
+        for tool in tools:
+            self.intent_router.register_tool(tool.name, tool)
+            self.tool_executor.register_tool(tool.name, tool)
+        
+        self.video_splitter = video_splitter_instance
+        self.tts_service = tts_service_instance
+        self.subtitle_generator = subtitle_generator_instance
+        self.background_music_service = background_music_service_instance
+        self.sticker_service = sticker_service_instance
+        self.video_composer = video_composer_instance
+
+    def create_conversation(self, title: str = "新对话") -> str:
+        conversation = self.conversation_manager.create_conversation(title=title)
+        return conversation.id
+
+    def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
+        return self.conversation_manager.get_conversation(conversation_id)
+
+    def get_all_conversations(self) -> List[Conversation]:
+        return self.conversation_manager.get_all_conversations()
+
+    def delete_conversation(self, conversation_id: str) -> bool:
+        return self.conversation_manager.delete_conversation(conversation_id)
+
+    async def chat(
+        self,
+        user_input: str,
+        conversation_id: Optional[str] = None,
+        auto_execute_tools: bool = True,
+    ) -> ChatResponse:
+        if conversation_id:
+            conversation = self.conversation_manager.get_conversation(conversation_id)
+            if not conversation:
+                conversation = self.conversation_manager.create_conversation()
+                conversation_id = conversation.id
+        else:
+            conversation = self.conversation_manager.create_conversation()
+            conversation_id = conversation.id
+
+        self.conversation_manager.add_user_message(
+            conversation_id,
+            user_input,
+        )
+
+        intent_result = await self.intent_router.recognize_intent(
+            user_input,
+            conversation,
+        )
+
+        if intent_result.intent == IntentType.CLARIFICATION:
+            response = ChatResponse(
+                content=intent_result.reasoning or "我需要更多信息来帮您完成这个任务。",
+                conversation_id=conversation_id,
+                is_complete=True,
+            )
+            self.conversation_manager.add_assistant_message(
+                conversation_id,
+                response.content,
+            )
+            return response
+
+        if intent_result.intent == IntentType.CONVERSATION:
+            messages = conversation.get_langchain_messages()
+            llm_response = await self.llm_service.chat(messages)
+            
+            response = ChatResponse(
+                content=llm_response.content,
+                conversation_id=conversation_id,
+                is_complete=True,
+            )
+            self.conversation_manager.add_assistant_message(
+                conversation_id,
+                response.content,
+            )
+            return response
+
+        messages = conversation.get_langchain_messages()
+        llm_response = await self.llm_service.chat(
+            messages,
+            tools=tools,
+        )
+
+        tool_calls = llm_response.tool_calls or []
+        tool_results = []
+
+        if tool_calls and auto_execute_tools:
+            for tool_call in tool_calls:
+                tool_name = tool_call['name']
+                tool_params = tool_call['args']
+                tool_call_id = tool_call['id']
+
+                execution_result = await self.tool_executor.execute_tool(
+                    tool_name,
+                    tool_params,
+                )
+
+                result_content = json.dumps(
+                    execution_result.result if execution_result.success else {'error': execution_result.error},
+                    ensure_ascii=False,
+                )
+
+                self.conversation_manager.add_tool_message(
+                    conversation_id,
+                    content=result_content,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                )
+
+                tool_results.append({
+                    'tool_name': tool_name,
+                    'success': execution_result.success,
+                    'result': execution_result.result,
+                    'error': execution_result.error,
+                })
+
+            updated_messages = conversation.get_langchain_messages()
+            final_response = await self.llm_service.chat(updated_messages)
+
+            response = ChatResponse(
+                content=final_response.content,
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+                conversation_id=conversation_id,
+                is_complete=True,
+            )
+
+            self.conversation_manager.add_assistant_message(
+                conversation_id,
+                response.content,
+            )
+
+            self._update_context_from_results(conversation_id, tool_results)
+
+            return response
+
+        response = ChatResponse(
+            content=llm_response.content,
+            tool_calls=tool_calls,
+            conversation_id=conversation_id,
+            is_complete=not tool_calls,
+        )
+
+        if llm_response.content:
+            self.conversation_manager.add_assistant_message(
+                conversation_id,
+                llm_response.content,
+                tool_calls=tool_calls,
+            )
+
+        return response
+
+    def _update_context_from_results(
+        self,
+        conversation_id: str,
+        tool_results: List[Dict[str, Any]],
+    ):
+        for result in tool_results:
+            if not result['success']:
+                continue
+            
+            tool_name = result['tool_name']
+            data = result['result']
+            
+            if tool_name == 'compose_video_tool':
+                if data.get('output_path'):
+                    self.conversation_manager.update_context(
+                        conversation_id,
+                        output_path=data['output_path'],
+                        last_action='compose_video',
+                    )
+            elif tool_name == 'get_video_info_tool':
+                if data.get('success'):
+                    self.conversation_manager.update_context(
+                        conversation_id,
+                        last_action='get_video_info',
+                    )
+            elif tool_name == 'generate_tts_tool':
+                if data.get('success'):
+                    self.conversation_manager.update_context(
+                        conversation_id,
+                        last_action='generate_tts',
+                    )
+
+    async def execute_tool_direct(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        conversation_id: Optional[str] = None,
+    ) -> ToolExecutionResult:
+        result = await self.tool_executor.execute_tool(tool_name, parameters)
+        
+        if conversation_id:
+            conversation = self.conversation_manager.get_conversation(conversation_id)
+            if conversation:
+                self.conversation_manager.update_context(
+                    conversation_id,
+                    last_action=tool_name,
+                )
+        
+        return result
+
+    def get_tool_info(self) -> List[Dict[str, Any]]:
+        tool_info_list = []
+        for tool in tools:
+            tool_info_list.append({
+                'name': tool.name,
+                'description': tool.description,
+                'args_schema': tool.args_schema.schema() if tool.args_schema else None,
+            })
+        return tool_info_list
+
+
+_smart_agent: Optional[SmartVideoEditorAgent] = None
+
+
+def get_smart_agent() -> SmartVideoEditorAgent:
+    global _smart_agent
+    if _smart_agent is None:
+        _smart_agent = SmartVideoEditorAgent()
+    return _smart_agent
+
+
 def create_video_editor_agent():
-    """
-    创建视频编辑Agent。
-
-    这个Agent可以执行以下操作：
-    - 获取视频/音频信息
-    - 分割视频
-    - 合并视频
-    - 生成TTS语音
-    - 生成字幕
-    - 添加背景音乐
-    - 添加贴纸
-    - 一键合成视频（包含所有功能）
-    """
-    from langgraph.graph import StateGraph, START, END
-    from langgraph.prebuilt import ToolNode
-    from langchain_core.tools import tool
-
-    def should_continue(state: AgentState):
-        messages = state['messages']
-        last_message = messages[-1] if messages else None
-
-        if last_message and hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-            return 'tools'
-        return END
-
-    def call_model(state: AgentState):
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        system_prompt = SystemMessage(content="""你是一个专业的视频编辑Agent。你可以使用以下工具来帮助用户完成视频编辑任务：
-
-1. split_video_tool - 将视频分割成多个片段
-2. get_video_info_tool - 获取视频文件的详细信息
-3. generate_tts_tool - 使用TTS生成语音文件
-4. generate_subtitles_tool - 从文本生成字幕
-5. add_background_music_tool - 为视频添加背景音乐
-6. add_sticker_tool - 为视频添加贴纸
-7. compose_video_tool - 一键合成视频（可同时添加TTS、字幕、背景音乐和贴纸）
-8. merge_videos_tool - 合并多个视频
-9. get_audio_info_tool - 获取音频文件信息
-
-当用户询问如何编辑视频时，分析用户需求并选择合适的工具。
-
-使用工具时：
-- 确保提供的文件路径是正确的
-- 对于贴纸位置，可选择：top-left, top, top-right, middle-left, middle, middle-right, bottom-left, bottom, bottom-right
-- 对于compose_video_tool，可以一次性完成多项操作，这是最常用的工具
-
-执行完工具后，总结结果给用户。""")
-
-        return {'messages': [system_prompt]}
-
-    workflow = StateGraph(AgentState)
-
-    tool_node = ToolNode(tools)
-
-    workflow.add_node('model', call_model)
-    workflow.add_node('tools', tool_node)
-
-    workflow.add_edge(START, 'model')
-    workflow.add_conditional_edges('model', should_continue)
-    workflow.add_edge('tools', 'model')
-
-    app = workflow.compile()
-    return app
+    return get_smart_agent()
 
 
 class VideoEditorAgent:
-    """
-    视频编辑Agent类，提供更简单的接口。
-    """
-
     def __init__(self):
-        self.app = create_video_editor_agent()
-        self.video_splitter = VideoSplitter()
-        self.tts_service = MiniMaxTTSService()
-        self.subtitle_generator = SubtitleGenerator()
-        self.background_music_service = BackgroundMusicService()
-        self.sticker_service = StickerService()
-        self.video_composer = VideoComposer()
+        self._smart_agent = get_smart_agent()
+        self.video_splitter = video_splitter_instance
+        self.tts_service = tts_service_instance
+        self.subtitle_generator = subtitle_generator_instance
+        self.background_music_service = background_music_service_instance
+        self.sticker_service = sticker_service_instance
+        self.video_composer = video_composer_instance
 
     def get_video_info(self, video_path: str) -> Dict[str, Any]:
-        """获取视频信息"""
         return get_video_info_tool.invoke({'video_path': video_path})
 
     def split_video(self, video_path: str, segment_duration: int = 30) -> Dict[str, Any]:
-        """分割视频"""
         return split_video_tool.invoke({
             'video_path': video_path,
             'segment_duration': segment_duration
@@ -539,7 +769,6 @@ class VideoEditorAgent:
 
     def generate_tts(self, text: str, voice_id: Optional[str] = None,
                       speed: float = 1.0) -> Dict[str, Any]:
-        """生成TTS语音"""
         return generate_tts_tool.invoke({
             'text': text,
             'voice_id': voice_id,
@@ -547,7 +776,6 @@ class VideoEditorAgent:
         })
 
     def generate_subtitles(self, text: str, total_duration: Optional[float] = None) -> Dict[str, Any]:
-        """生成字幕"""
         return generate_subtitles_tool.invoke({
             'text': text,
             'total_duration': total_duration
@@ -555,7 +783,6 @@ class VideoEditorAgent:
 
     def add_background_music(self, video_path: str, music_path: str,
                                volume: float = 0.3) -> Dict[str, Any]:
-        """添加背景音乐"""
         return add_background_music_tool.invoke({
             'video_path': video_path,
             'music_path': music_path,
@@ -565,7 +792,6 @@ class VideoEditorAgent:
     def add_sticker(self, video_path: str, sticker_path: str,
                      position: str = 'bottom-right', scale: float = 1.0,
                      opacity: float = 1.0) -> Dict[str, Any]:
-        """添加贴纸"""
         return add_sticker_tool.invoke({
             'video_path': video_path,
             'sticker_path': sticker_path,
@@ -582,7 +808,6 @@ class VideoEditorAgent:
                        add_subtitles: bool = True,
                        add_background_music: bool = True,
                        add_stickers: bool = True) -> Dict[str, Any]:
-        """一键合成视频"""
         return compose_video_tool.invoke({
             'video_path': video_path,
             'text_content': text_content,
@@ -595,42 +820,11 @@ class VideoEditorAgent:
         })
 
     def merge_videos(self, video_paths: List[str], output_path: str) -> Dict[str, Any]:
-        """合并视频"""
         return merge_videos_tool.invoke({
             'video_paths': video_paths,
             'output_path': output_path
         })
 
     async def chat(self, user_input: str) -> str:
-        """
-        与Agent进行对话式交互。
-
-        Args:
-            user_input: 用户的自然语言输入
-
-        Returns:
-            Agent的响应
-        """
-        from langchain_core.messages import HumanMessage
-
-        state = {
-            'messages': [HumanMessage(content=user_input)],
-            'video_path': None,
-            'text_content': None,
-            'background_music_path': None,
-            'stickers': None,
-            'actions': [],
-            'current_step': None,
-            'results': {},
-            'errors': []
-        }
-
-        result = await self.app.ainvoke(state)
-
-        messages = result.get('messages', [])
-        if messages:
-            last_message = messages[-1]
-            if hasattr(last_message, 'content'):
-                return last_message.content
-
-        return "处理完成。"
+        response = await self._smart_agent.chat(user_input)
+        return response.content
