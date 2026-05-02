@@ -14,6 +14,7 @@ from src.modules.subtitle_generator import SubtitleGenerator
 from src.modules.background_music import BackgroundMusicService
 from src.modules.sticker_service import StickerService
 from src.modules.video_composer import VideoComposer
+from src.modules.video_resizer import VideoResizer
 
 
 def main():
@@ -67,6 +68,43 @@ def main():
     info_parser = subparsers.add_parser('info', help='获取视频/音频信息')
     info_parser.add_argument('-i', '--input', required=True, help='输入文件路径')
 
+    resize_parser = subparsers.add_parser('resize', help='调整视频分辨率')
+    resize_parser.add_argument('-i', '--input', required=True, help='输入视频文件路径')
+    resize_parser.add_argument('-o', '--output', help='输出目录')
+    resize_parser.add_argument('-w', '--width', type=int, help='目标宽度')
+    resize_parser.add_argument('--height', type=int, help='目标高度 (使用 --height 而不是 -h 以避免与 --help 冲突)')
+    resize_parser.add_argument('-r', '--resolution', help='目标分辨率 (如 720p, 1080x1920)')
+    resize_parser.add_argument('--preset', default='medium', help='编码预设 (ultrafast/slow/medium)')
+    resize_parser.add_argument('--crf', type=int, default=23, help='CRF 质量值 (0-51, 越低质量越好)')
+
+    crop_parser = subparsers.add_parser('crop', help='裁剪视频画面')
+    crop_parser.add_argument('-i', '--input', required=True, help='输入视频文件路径')
+    crop_parser.add_argument('-o', '--output', help='输出目录')
+    crop_parser.add_argument('-w', '--width', type=int, help='裁剪宽度')
+    crop_parser.add_argument('--height', type=int, help='裁剪高度')
+    crop_parser.add_argument('-x', type=int, help='裁剪起始 X 坐标 (默认居中)')
+    crop_parser.add_argument('-y', type=int, help='裁剪起始 Y 坐标 (默认居中)')
+    crop_parser.add_argument('--aspect', help='按画幅比裁剪 (如 9:16, 16:9, 1:1)')
+
+    aspect_parser = subparsers.add_parser('aspect', help='切换视频画幅比')
+    aspect_parser.add_argument('-i', '--input', required=True, help='输入视频文件路径')
+    aspect_parser.add_argument('-o', '--output', help='输出目录')
+    aspect_parser.add_argument('-t', '--target', default='9:16', choices=['9:16', '16:9', '1:1', '4:3', '3:4'], help='目标画幅比 (默认 9:16 抖音竖屏)')
+    aspect_parser.add_argument('-m', '--method', default='crop', choices=['crop', 'pad'], help='转换方式: crop=中心裁剪, pad=加黑边')
+    aspect_parser.add_argument('-r', '--resolution', help='目标分辨率 (如 720x1280)')
+    aspect_parser.add_argument('--color', default='black', help='pad 模式的填充颜色 (black/white/gray)')
+    aspect_parser.add_argument('--preset', default='medium', help='编码预设')
+    aspect_parser.add_argument('--crf', type=int, default=23, help='CRF 质量值')
+
+    douyin_parser = subparsers.add_parser('douyin', help='一键转换为抖音竖屏格式 (9:16)')
+    douyin_parser.add_argument('-i', '--input', required=True, help='输入视频文件路径')
+    douyin_parser.add_argument('-o', '--output', help='输出目录')
+    douyin_parser.add_argument('-m', '--method', default='crop', choices=['crop', 'pad'], help='转换方式: crop=中心裁剪, pad=加黑边')
+    douyin_parser.add_argument('-r', '--resolution', default='720x1280', help='目标分辨率 (默认 720x1280)')
+    douyin_parser.add_argument('--color', default='black', help='pad 模式的填充颜色')
+    douyin_parser.add_argument('--preset', default='medium', help='编码预设')
+    douyin_parser.add_argument('--crf', type=int, default=23, help='CRF 质量值')
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -85,6 +123,14 @@ def main():
         handle_compose(args)
     elif args.command == 'info':
         handle_info(args)
+    elif args.command == 'resize':
+        handle_resize(args)
+    elif args.command == 'crop':
+        handle_crop(args)
+    elif args.command == 'aspect':
+        handle_aspect(args)
+    elif args.command == 'douyin':
+        handle_douyin(args)
 
 
 def handle_split(args):
@@ -323,6 +369,155 @@ def handle_info(args):
             sys.exit(1)
     except Exception as error:
         print(f'获取文件信息失败: {error}')
+        sys.exit(1)
+
+
+def handle_resize(args):
+    try:
+        resizer = VideoResizer({
+            'output_dir': args.output or config.output_dir,
+        })
+        
+        resolution_info = resizer.get_video_resolution_info(args.input)
+        print(f'原始视频信息:')
+        print(f'  分辨率: {resolution_info["resolution"]}')
+        print(f'  画幅比: {resolution_info["aspect_ratio"]}')
+        print(f'  方向: {resolution_info["orientation"]}')
+        
+        result = resizer.resize_video(
+            args.input,
+            target_width=args.width,
+            target_height=args.height,
+            resolution=args.resolution,
+            options={
+                'preset': args.preset,
+                'crf': args.crf,
+                'output_dir': args.output,
+            }
+        )
+        
+        if not result.success:
+            raise Exception(result.error or '调整分辨率失败')
+        
+        print('\n分辨率调整完成！')
+        print(f'原始分辨率: {result.original_width}x{result.original_height} ({result.original_aspect_ratio})')
+        print(f'输出分辨率: {result.output_width}x{result.output_height} ({result.output_aspect_ratio})')
+        print(f'输出文件: {result.output_path}')
+    except Exception as error:
+        print(f'调整分辨率失败: {error}')
+        sys.exit(1)
+
+
+def handle_crop(args):
+    try:
+        resizer = VideoResizer({
+            'output_dir': args.output or config.output_dir,
+        })
+        
+        resolution_info = resizer.get_video_resolution_info(args.input)
+        print(f'原始视频信息:')
+        print(f'  分辨率: {resolution_info["resolution"]}')
+        print(f'  画幅比: {resolution_info["aspect_ratio"]}')
+        
+        result = resizer.crop_video(
+            args.input,
+            crop_width=args.width,
+            crop_height=args.height,
+            crop_x=args.x,
+            crop_y=args.y,
+            aspect_ratio=args.aspect,
+            options={
+                'output_dir': args.output,
+            }
+        )
+        
+        if not result.success:
+            raise Exception(result.error or '裁剪失败')
+        
+        print('\n视频裁剪完成！')
+        print(f'原始分辨率: {result.original_width}x{result.original_height}')
+        print(f'裁剪区域: ({result.crop_x}, {result.crop_y}) 开始, {result.crop_width}x{result.crop_height}')
+        print(f'输出文件: {result.output_path}')
+    except Exception as error:
+        print(f'裁剪视频失败: {error}')
+        sys.exit(1)
+
+
+def handle_aspect(args):
+    try:
+        resizer = VideoResizer({
+            'output_dir': args.output or config.output_dir,
+        })
+        
+        resolution_info = resizer.get_video_resolution_info(args.input)
+        print(f'原始视频信息:')
+        print(f'  分辨率: {resolution_info["resolution"]}')
+        print(f'  画幅比: {resolution_info["aspect_ratio"]}')
+        print(f'  方向: {resolution_info["orientation"]}')
+        
+        result = resizer.convert_aspect_ratio(
+            args.input,
+            target_aspect=args.target,
+            method=args.method,
+            target_resolution=args.resolution,
+            pad_color=args.color,
+            options={
+                'preset': args.preset,
+                'crf': args.crf,
+                'output_dir': args.output,
+            }
+        )
+        
+        if not result.success:
+            raise Exception(result.error or '画幅比转换失败')
+        
+        print(f'\n画幅比转换完成！')
+        print(f'原始: {result.original_aspect_ratio} ({result.original_width}x{result.original_height})')
+        print(f'目标: {result.target_aspect_ratio} ({result.output_width}x{result.output_height})')
+        print(f'方法: {"中心裁剪" if result.method == "crop" else "加黑边填充" if result.method == "pad" else "无需转换"}')
+        print(f'输出文件: {result.output_path}')
+    except Exception as error:
+        print(f'画幅比转换失败: {error}')
+        sys.exit(1)
+
+
+def handle_douyin(args):
+    try:
+        resizer = VideoResizer({
+            'output_dir': args.output or config.output_dir,
+        })
+        
+        resolution_info = resizer.get_video_resolution_info(args.input)
+        print(f'原始视频信息:')
+        print(f'  分辨率: {resolution_info["resolution"]}')
+        print(f'  画幅比: {resolution_info["aspect_ratio"]}')
+        print(f'  方向: {resolution_info["orientation"]}')
+        
+        print(f'\n正在转换为抖音竖屏格式 (9:16)...')
+        print(f'  目标分辨率: {args.resolution}')
+        print(f'  转换方法: {"中心裁剪" if args.method == "crop" else "加黑边填充"}')
+        
+        result = resizer.convert_to_douyin_format(
+            args.input,
+            method=args.method,
+            target_resolution=args.resolution,
+            options={
+                'preset': args.preset,
+                'crf': args.crf,
+                'output_dir': args.output,
+            }
+        )
+        
+        if not result.success:
+            raise Exception(result.error or '抖音格式转换失败')
+        
+        print(f'\n抖音竖屏格式转换完成！')
+        print(f'原始: {result.original_aspect_ratio} ({result.original_width}x{result.original_height})')
+        print(f'输出: {result.target_aspect_ratio} ({result.output_width}x{result.output_height})')
+        print(f'方法: {"中心裁剪" if result.method == "crop" else "加黑边填充" if result.method == "pad" else "无需转换"}')
+        print(f'输出文件: {result.output_path}')
+    except Exception as error:
+        print(f'抖音格式转换失败: {error}')
         sys.exit(1)
 
 

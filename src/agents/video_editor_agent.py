@@ -20,6 +20,7 @@ from src.modules.subtitle_generator import SubtitleGenerator
 from src.modules.background_music import BackgroundMusicService
 from src.modules.sticker_service import StickerService
 from src.modules.video_composer import VideoComposer
+from src.modules.video_resizer import VideoResizer, COMMON_ASPECT_RATIOS, COMMON_RESOLUTIONS
 
 from src.agents.llm_service import (
     LLMService,
@@ -62,6 +63,10 @@ VIDEO_EDITOR_SYSTEM_PROMPT = """你是一个专业的视频编辑助手，可以
 6. **添加背景音乐** - 为视频添加背景音乐
 7. **添加贴纸** - 为视频添加静态或动态贴纸
 8. **一键合成视频** - 同时添加 TTS 语音、字幕、背景音乐和贴纸（推荐使用）
+9. **调整分辨率** - 改变视频尺寸，如 1080p → 720p
+10. **裁剪视频画面** - 裁剪视频画面，支持指定画幅比（如 9:16）
+11. **切换画幅比** - 转换视频画幅比，支持横屏16:9/正方形1:1 → 竖屏9:16（抖音格式）
+12. **抖音竖屏转换** - 一键转换为抖音竖屏格式（9:16）
 
 **工作流程：**
 1. 分析用户的需求
@@ -76,6 +81,12 @@ VIDEO_EDITOR_SYSTEM_PROMPT = """你是一个专业的视频编辑助手，可以
 
 **贴纸位置选项：**
 top-left, top, top-right, middle-left, middle, middle-right, bottom-left, bottom, bottom-right
+
+**支持的画幅比：**
+9:16 (抖音竖屏), 16:9 (横屏), 1:1 (正方形), 4:3, 3:4
+
+**支持的分辨率预设：**
+1080p (1920x1080), 720p (1280x720), 480p, 360p, 4k, 1080x1920 (竖屏), 720x1280 (竖屏)
 
 请用友好、专业的中文回答用户的问题。"""
 
@@ -99,6 +110,7 @@ subtitle_generator_instance = SubtitleGenerator()
 background_music_service_instance = BackgroundMusicService()
 sticker_service_instance = StickerService()
 video_composer_instance = VideoComposer()
+video_resizer_instance = VideoResizer()
 
 
 @langchain_tool
@@ -493,6 +505,178 @@ def get_audio_info_tool(audio_path: str) -> Dict[str, Any]:
         return {'success': False, 'error': str(e)}
 
 
+@langchain_tool
+def resize_video_tool(video_path: str,
+                      target_width: Optional[int] = None,
+                      target_height: Optional[int] = None,
+                      resolution: Optional[str] = None) -> Dict[str, Any]:
+    """
+    调整视频分辨率。可以指定目标宽度/高度，或使用预设分辨率（如 '720p', '1080x1920'）。
+
+    Args:
+        video_path: 输入视频文件的路径
+        target_width: 目标宽度（可选，若只指定宽度则保持宽高比）
+        target_height: 目标高度（可选，若只指定高度则保持宽高比）
+        resolution: 预设分辨率，如 '720p', '1080p', '1080x1920', '720x1280'（可选）
+
+    Returns:
+        包含调整结果的字典，包括输出文件路径和新的分辨率
+    """
+    try:
+        result = video_resizer_instance.resize_video(
+            video_path=video_path,
+            target_width=target_width,
+            target_height=target_height,
+            resolution=resolution
+        )
+        
+        if not result.success:
+            return {'success': False, 'error': result.error}
+        
+        return {
+            'success': True,
+            'original_resolution': f"{result.original_width}x{result.original_height}",
+            'original_aspect_ratio': result.original_aspect_ratio,
+            'output_resolution': f"{result.output_width}x{result.output_height}",
+            'output_aspect_ratio': result.output_aspect_ratio,
+            'output_path': result.output_path,
+            'operation': 'resize'
+        }
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+@langchain_tool
+def crop_video_tool(video_path: str,
+                    crop_width: Optional[int] = None,
+                    crop_height: Optional[int] = None,
+                    crop_x: Optional[int] = None,
+                    crop_y: Optional[int] = None,
+                    aspect_ratio: Optional[str] = None) -> Dict[str, Any]:
+    """
+    裁剪视频画面。可以指定精确的裁剪区域，或按画幅比自动居中裁剪。
+
+    Args:
+        video_path: 输入视频文件的路径
+        crop_width: 裁剪宽度（可选，若使用 aspect_ratio 则不需要）
+        crop_height: 裁剪高度（可选，若使用 aspect_ratio 则不需要）
+        crop_x: 裁剪起始 X 坐标（可选，默认居中）
+        crop_y: 裁剪起始 Y 坐标（可选，默认居中）
+        aspect_ratio: 按画幅比裁剪，如 '9:16', '16:9', '1:1'（可选，推荐使用）
+
+    Returns:
+        包含裁剪结果的字典
+    """
+    try:
+        result = video_resizer_instance.crop_video(
+            video_path=video_path,
+            crop_width=crop_width,
+            crop_height=crop_height,
+            crop_x=crop_x,
+            crop_y=crop_y,
+            aspect_ratio=aspect_ratio
+        )
+        
+        if not result.success:
+            return {'success': False, 'error': result.error}
+        
+        return {
+            'success': True,
+            'original_resolution': f"{result.original_width}x{result.original_height}",
+            'crop_region': {
+                'x': result.crop_x,
+                'y': result.crop_y,
+                'width': result.crop_width,
+                'height': result.crop_height
+            },
+            'output_path': result.output_path
+        }
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+@langchain_tool
+def convert_aspect_ratio_tool(video_path: str,
+                               target_aspect: str = '9:16',
+                               method: str = 'crop',
+                               target_resolution: Optional[str] = None) -> Dict[str, Any]:
+    """
+    转换视频画幅比。支持从横屏16:9/正方形1:1等转换为竖屏9:16（抖音格式）。
+
+    Args:
+        video_path: 输入视频文件的路径
+        target_aspect: 目标画幅比，支持 '9:16'（抖音竖屏）、'16:9'（横屏）、'1:1'（正方形）、'4:3'、'3:4'
+        method: 转换方式，'crop' = 中心裁剪（保留中间部分），'pad' = 加黑边填充（保留全部内容）
+        target_resolution: 目标分辨率，如 '720x1280'（可选）
+
+    Returns:
+        包含转换结果的字典
+    """
+    try:
+        result = video_resizer_instance.convert_aspect_ratio(
+            video_path=video_path,
+            target_aspect=target_aspect,
+            method=method,
+            target_resolution=target_resolution
+        )
+        
+        if not result.success:
+            return {'success': False, 'error': result.error}
+        
+        return {
+            'success': True,
+            'original_resolution': f"{result.original_width}x{result.original_height}",
+            'original_aspect_ratio': result.original_aspect_ratio,
+            'target_aspect_ratio': result.target_aspect_ratio,
+            'output_resolution': f"{result.output_width}x{result.output_height}",
+            'method': result.method,
+            'method_description': '中心裁剪' if result.method == 'crop' else '加黑边填充' if result.method == 'pad' else '无需转换',
+            'output_path': result.output_path
+        }
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+@langchain_tool
+def convert_to_douyin_format_tool(video_path: str,
+                                   method: str = 'crop',
+                                   target_resolution: str = '720x1280') -> Dict[str, Any]:
+    """
+    一键转换为抖音竖屏格式（9:16）。这是转换抖音视频的首选工具。
+
+    Args:
+        video_path: 输入视频文件的路径
+        method: 转换方式，'crop' = 中心裁剪（推荐，保留中间部分），'pad' = 加黑边填充（保留全部内容）
+        target_resolution: 目标分辨率，默认 '720x1280'
+
+    Returns:
+        包含转换结果的字典
+    """
+    try:
+        result = video_resizer_instance.convert_to_douyin_format(
+            video_path=video_path,
+            method=method,
+            target_resolution=target_resolution
+        )
+        
+        if not result.success:
+            return {'success': False, 'error': result.error}
+        
+        return {
+            'success': True,
+            'original_resolution': f"{result.original_width}x{result.original_height}",
+            'original_aspect_ratio': result.original_aspect_ratio,
+            'target_aspect_ratio': result.target_aspect_ratio,
+            'output_resolution': f"{result.output_width}x{result.output_height}",
+            'method': result.method,
+            'method_description': '中心裁剪' if result.method == 'crop' else '加黑边填充' if result.method == 'pad' else '无需转换',
+            'output_path': result.output_path,
+            'note': '已转换为抖音竖屏格式 9:16'
+        }
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
 tools = [
     split_video_tool,
     get_video_info_tool,
@@ -502,7 +686,11 @@ tools = [
     add_sticker_tool,
     compose_video_tool,
     merge_videos_tool,
-    get_audio_info_tool
+    get_audio_info_tool,
+    resize_video_tool,
+    crop_video_tool,
+    convert_aspect_ratio_tool,
+    convert_to_douyin_format_tool
 ]
 
 
@@ -544,6 +732,7 @@ class SmartVideoEditorAgent:
         self.background_music_service = background_music_service_instance
         self.sticker_service = sticker_service_instance
         self.video_composer = video_composer_instance
+        self.video_resizer = video_resizer_instance
         
         self._current_task: Optional[TaskProgress] = None
 
@@ -571,6 +760,10 @@ class SmartVideoEditorAgent:
             'compose_video_tool': '合成视频',
             'merge_videos_tool': '合并视频',
             'get_audio_info_tool': '获取音频信息',
+            'resize_video_tool': '调整分辨率',
+            'crop_video_tool': '裁剪视频',
+            'convert_aspect_ratio_tool': '切换画幅比',
+            'convert_to_douyin_format_tool': '抖音格式转换',
         }
         return tool_names.get(tool_name, tool_name)
 
@@ -868,6 +1061,7 @@ class VideoEditorAgent:
         self.background_music_service = background_music_service_instance
         self.sticker_service = sticker_service_instance
         self.video_composer = video_composer_instance
+        self.video_resizer = video_resizer_instance
 
     def get_video_info(self, video_path: str) -> Dict[str, Any]:
         return get_video_info_tool.invoke({'video_path': video_path})
@@ -934,6 +1128,52 @@ class VideoEditorAgent:
         return merge_videos_tool.invoke({
             'video_paths': video_paths,
             'output_path': output_path
+        })
+
+    def resize_video(self, video_path: str,
+                     target_width: Optional[int] = None,
+                     target_height: Optional[int] = None,
+                     resolution: Optional[str] = None) -> Dict[str, Any]:
+        return resize_video_tool.invoke({
+            'video_path': video_path,
+            'target_width': target_width,
+            'target_height': target_height,
+            'resolution': resolution
+        })
+
+    def crop_video(self, video_path: str,
+                   crop_width: Optional[int] = None,
+                   crop_height: Optional[int] = None,
+                   crop_x: Optional[int] = None,
+                   crop_y: Optional[int] = None,
+                   aspect_ratio: Optional[str] = None) -> Dict[str, Any]:
+        return crop_video_tool.invoke({
+            'video_path': video_path,
+            'crop_width': crop_width,
+            'crop_height': crop_height,
+            'crop_x': crop_x,
+            'crop_y': crop_y,
+            'aspect_ratio': aspect_ratio
+        })
+
+    def convert_aspect_ratio(self, video_path: str,
+                              target_aspect: str = '9:16',
+                              method: str = 'crop',
+                              target_resolution: Optional[str] = None) -> Dict[str, Any]:
+        return convert_aspect_ratio_tool.invoke({
+            'video_path': video_path,
+            'target_aspect': target_aspect,
+            'method': method,
+            'target_resolution': target_resolution
+        })
+
+    def convert_to_douyin_format(self, video_path: str,
+                                  method: str = 'crop',
+                                  target_resolution: str = '720x1280') -> Dict[str, Any]:
+        return convert_to_douyin_format_tool.invoke({
+            'video_path': video_path,
+            'method': method,
+            'target_resolution': target_resolution
         })
 
     async def chat(self, user_input: str) -> str:

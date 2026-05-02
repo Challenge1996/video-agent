@@ -9,6 +9,9 @@
 - 📝 **字幕生成**：从文本自动生成 SRT 格式字幕，支持时间轴精确计算
 - 🎵 **背景音乐处理**：循环播放、淡入淡出、闪避效果（语音时段自动降低音量）
 - 🏷️ **贴纸添加**：支持静态图片和动态 GIF 贴纸
+- 📐 **分辨率调整**：支持 1080p → 720p 等分辨率转换
+- ✂️ **画面裁剪**：支持按区域裁剪或按画幅比居中裁剪
+- 🔄 **画幅比转换**：支持横屏16:9/正方形1:1 → 竖屏9:16（抖音格式），支持中心裁剪或加黑边填充
 - 🤖 **智能 Agent**：基于 LangGraph 的工作流，支持自然语言交互
 - 🚀 **一键合成**：使用 `compose` 命令一次完成所有视频编辑操作
 
@@ -192,6 +195,67 @@ python -m src.index info -i video.mp4
 python -m src.index info -i music.mp3
 ```
 
+### 调整视频分辨率
+
+```bash
+# 调整到 720p (1280x720)
+python -m src.index resize -i video.mp4 -r 720p
+
+# 调整到 1080p (1920x1080)
+python -m src.index resize -i video.mp4 -r 1080p
+
+# 按宽度调整（高度自动按比例计算）
+python -m src.index resize -i video.mp4 -w 640
+
+# 自定义分辨率 720x1280 (竖屏)
+python -m src.index resize -i video.mp4 -r 720x1280
+```
+
+### 裁剪视频画面
+
+```bash
+# 按画幅比裁剪为 9:16 竖屏（自动居中裁剪）
+python -m src.index crop -i video.mp4 --aspect 9:16
+
+# 按画幅比裁剪为 1:1 正方形
+python -m src.index crop -i video.mp4 --aspect 1:1
+
+# 按画幅比裁剪为 16:9 横屏
+python -m src.index crop -i video.mp4 --aspect 16:9
+
+# 精确区域裁剪：从 (100, 100) 开始，裁剪 500x500
+python -m src.index crop -i video.mp4 -w 500 --height 500 -x 100 -y 100
+```
+
+### 切换视频画幅比
+
+```bash
+# 转换为 9:16 竖屏，使用中心裁剪（保留中间部分，推荐）
+python -m src.index aspect -i video.mp4 -t 9:16 -m crop -r 720x1280
+
+# 转换为 9:16 竖屏，使用加黑边填充（保留全部内容）
+python -m src.index aspect -i video.mp4 -t 9:16 -m pad -r 720x1280 --color black
+
+# 转换为 16:9 横屏
+python -m src.index aspect -i video.mp4 -t 16:9 -m crop
+
+# 转换为 1:1 正方形
+python -m src.index aspect -i video.mp4 -t 1:1 -m crop
+```
+
+### 抖音竖屏格式转换（一键）
+
+```bash
+# 一键转换为抖音竖屏格式 9:16（中心裁剪，推荐）
+python -m src.index douyin -i video.mp4
+
+# 一键转换为抖音竖屏格式 9:16（加黑边填充，保留全部内容）
+python -m src.index douyin -i video.mp4 -m pad
+
+# 自定义分辨率 1080x1920
+python -m src.index douyin -i video.mp4 -r 1080x1920
+```
+
 ## 🤖 使用 Agent
 
 项目包含基于 LangGraph 的智能 Agent，可以通过自然语言进行交互：
@@ -214,6 +278,18 @@ print(f"输出文件: {result['output_path']}")
 info = agent.get_video_info("input.mp4")
 print(f"视频时长: {info['duration']} 秒")
 print(f"分辨率: {info['resolution']}")
+
+# 调整视频分辨率
+result = agent.resize_video("input.mp4", resolution="720p")
+print(f"输出文件: {result['output_path']}")
+
+# 按画幅比裁剪为 9:16
+result = agent.crop_video("input.mp4", aspect_ratio="9:16")
+print(f"输出文件: {result['output_path']}")
+
+# 转换为抖音竖屏格式
+result = agent.convert_to_douyin_format("input.mp4", method="crop", target_resolution="720x1280")
+print(f"输出文件: {result['output_path']}")
 ```
 
 ## 📚 详细文档
@@ -263,6 +339,10 @@ pytest tests/ -v
 | `bgm` | 处理背景音乐 | `-i` 输入, `-d` 时长, `-v` 音量 |
 | `compose` | 合成视频（推荐） | `-i` 输入, `-t` 文本, `-b` 音乐, `-o` 输出 |
 | `info` | 获取媒体信息 | `-i` 输入文件 |
+| `resize` | 调整视频分辨率 | `-i` 输入, `-w` 宽度, `--height` 高度, `-r` 分辨率预设 |
+| `crop` | 裁剪视频画面 | `-i` 输入, `-w` 宽度, `--height` 高度, `--aspect` 画幅比 |
+| `aspect` | 切换视频画幅比 | `-i` 输入, `-t` 目标画幅, `-m` 转换方式, `-r` 目标分辨率 |
+| `douyin` | 一键转换抖音格式 | `-i` 输入, `-m` 转换方式, `-r` 目标分辨率 |
 
 ## 🔧 配置项
 
@@ -304,6 +384,48 @@ A: 检查字幕文件格式是否正确，以及字体是否支持中文。
 ### Q: 音频不同步？
 A: 检查视频和音频的帧率、采样率是否匹配。
 
+### Q: 如何将横屏视频转换为抖音竖屏格式？
+A: 有两种方式：
+
+**方式一：一键转换（推荐）**
+```bash
+python -m src.index douyin -i video.mp4
+```
+
+**方式二：使用 aspect 命令**
+```bash
+# 中心裁剪方式（保留中间部分）
+python -m src.index aspect -i video.mp4 -t 9:16 -m crop -r 720x1280
+
+# 加黑边填充方式（保留全部内容）
+python -m src.index aspect -i video.mp4 -t 9:16 -m pad -r 720x1280
+```
+
+### Q: `crop` 和 `pad` 两种转换方式有什么区别？
+A:
+- **crop（中心裁剪）**：从画面中心裁剪出目标比例的区域，画面会被截断，但不会有黑边，**推荐用于抖音视频**
+- **pad（加黑边填充）**：将原始画面等比例缩放后，在空白处填充黑边，保留完整画面内容，适合需要保留全部内容的场景
+
+### Q: 支持哪些画幅比转换？
+A: 支持以下画幅比：
+- `9:16` - 抖音/快手竖屏（推荐）
+- `16:9` - 横屏
+- `1:1` - 正方形
+- `4:3` - 传统电视比例
+- `3:4` - 类似 Instagram 竖屏
+
+### Q: 支持哪些分辨率预设？
+A: 支持以下分辨率预设：
+- `1080p` - 1920x1080
+- `720p` - 1280x720
+- `480p` - 854x480
+- `360p` - 640x360
+- `4k` - 3840x2160
+- `1080x1920` - 竖屏 1080p
+- `720x1280` - 竖屏 720p
+
+也可以使用自定义格式如 `1080x1920`、`720x1280` 等。
+
 ## 📄 许可证
 
 MIT License
@@ -314,5 +436,5 @@ MIT License
 
 ---
 
-**版本**：v1.0.0  
-**最后更新**：2026-04-24
+**版本**：v1.1.0  
+**最后更新**：2026-04-30

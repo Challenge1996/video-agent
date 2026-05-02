@@ -68,6 +68,10 @@ class Config:
             'default_segment_duration': 30,
             'default_resolution': '1920x1080',
             'default_fps': 30,
+            'douyin_aspect_ratio': '9:16',
+            'douyin_default_resolution': '720x1280',
+            'default_crf': 23,
+            'default_preset': 'medium',
         }
 
         self.audio = {
