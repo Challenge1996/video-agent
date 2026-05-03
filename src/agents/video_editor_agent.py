@@ -64,15 +64,33 @@ VIDEO_EDITOR_SYSTEM_PROMPT = """你是一个专业的视频编辑助手，可以
 7. **添加贴纸** - 为视频添加静态或动态贴纸
 8. **一键合成视频** - 同时添加 TTS 语音、字幕、背景音乐和贴纸（推荐使用）
 9. **调整分辨率** - 改变视频尺寸，如 1080p → 720p
-10. **裁剪视频画面** - 裁剪视频画面，支持指定画幅比（如 9:16）
-11. **切换画幅比** - 转换视频画幅比，支持横屏16:9/正方形1:1 → 竖屏9:16（抖音格式）
+10. **裁剪视频画面** - 裁剪视频画面，可以指定精确的裁剪区域或按画幅比居中裁剪
+11. **切换画幅比** - 转换视频画幅比并调整到目标分辨率，支持横屏16:9/正方形1:1 → 竖屏9:16（抖音格式）
 12. **抖音竖屏转换** - 一键转换为抖音竖屏格式（9:16）
+
+**重要：工具选择指南**
+
+当用户说以下内容时，使用 **switch_aspect_ratio_tool**（切换画幅比）：
+- "转换为9:16"、"改为竖屏"、"切换画幅比"
+- "调整为抖音格式"、"抖音尺寸"、"9:16比例"
+- 这个工具会同时调整分辨率（如 720x1280）和画幅比
+
+当用户说以下内容时，使用 **crop_video_tool**（裁剪视频画面）：
+- "裁剪画面"、"剪掉边缘"、"裁掉多余部分"
+- "按比例裁剪" 但不涉及具体目标分辨率
+
+**重要：工具执行结果使用**
+- 工具执行后会返回 `output_path` 字段，这是实际生成的文件路径
+- 工具执行后会返回 `output_filename` 字段，这是生成的文件名
+- **不要猜测文件名**，始终使用工具返回的 `output_path` 来获取结果
+- 如果工具返回 `success: false`，则表示执行失败，请检查错误信息
 
 **工作流程：**
 1. 分析用户的需求
 2. 如果需要更多信息，向用户询问
 3. 选择合适的工具来执行任务
 4. 执行工具并向用户报告结果
+5. 使用工具返回的 `output_path` 来查看结果文件
 
 **注意事项：**
 - 对于视频路径，确保用户提供的是正确的绝对路径或相对路径
@@ -677,6 +695,52 @@ def convert_to_douyin_format_tool(video_path: str,
         return {'success': False, 'error': str(e)}
 
 
+@langchain_tool
+def switch_aspect_ratio_tool(video_path: str,
+                              aspect_ratio: str = '9:16',
+                              method: str = 'crop',
+                              target_resolution: Optional[str] = '720x1280') -> Dict[str, Any]:
+    """
+    切换视频画幅比。这是转换视频画幅比的主要工具，推荐使用。
+    支持从横屏16:9/正方形1:1等转换为竖屏9:16（抖音格式）。
+
+    当用户说"转换为9:16"、"改为竖屏"、"切换画幅比"、"调整为抖音格式"时，使用此工具。
+
+    Args:
+        video_path: 输入视频文件的路径
+        aspect_ratio: 目标画幅比，支持 '9:16'（抖音竖屏）、'16:9'（横屏）、'1:1'（正方形）、'4:3'、'3:4'
+        method: 转换方式，'crop' = 中心裁剪（推荐，保留中间部分，无黑边），'pad' = 加黑边填充（保留全部内容）
+        target_resolution: 目标分辨率，默认 '720x1280'（抖音标准）
+
+    Returns:
+        包含转换结果的字典
+    """
+    try:
+        result = video_resizer_instance.convert_aspect_ratio(
+            video_path=video_path,
+            target_aspect=aspect_ratio,
+            method=method,
+            target_resolution=target_resolution
+        )
+        
+        if not result.success:
+            return {'success': False, 'error': result.error}
+        
+        return {
+            'success': True,
+            'original_resolution': f"{result.original_width}x{result.original_height}",
+            'original_aspect_ratio': result.original_aspect_ratio,
+            'target_aspect_ratio': result.target_aspect_ratio,
+            'output_resolution': f"{result.output_width}x{result.output_height}",
+            'method': result.method,
+            'method_description': '中心裁剪' if result.method == 'crop' else '加黑边填充' if result.method == 'pad' else '无需转换',
+            'output_path': result.output_path,
+            'output_filename': os.path.basename(result.output_path)
+        }
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
 tools = [
     split_video_tool,
     get_video_info_tool,
@@ -690,7 +754,8 @@ tools = [
     resize_video_tool,
     crop_video_tool,
     convert_aspect_ratio_tool,
-    convert_to_douyin_format_tool
+    convert_to_douyin_format_tool,
+    switch_aspect_ratio_tool
 ]
 
 
@@ -764,6 +829,7 @@ class SmartVideoEditorAgent:
             'crop_video_tool': '裁剪视频',
             'convert_aspect_ratio_tool': '切换画幅比',
             'convert_to_douyin_format_tool': '抖音格式转换',
+            'switch_aspect_ratio_tool': '切换画幅比',
         }
         return tool_names.get(tool_name, tool_name)
 
@@ -1172,6 +1238,17 @@ class VideoEditorAgent:
                                   target_resolution: str = '720x1280') -> Dict[str, Any]:
         return convert_to_douyin_format_tool.invoke({
             'video_path': video_path,
+            'method': method,
+            'target_resolution': target_resolution
+        })
+
+    def switch_aspect_ratio(self, video_path: str,
+                            aspect_ratio: str = '9:16',
+                            method: str = 'crop',
+                            target_resolution: str = '720x1280') -> Dict[str, Any]:
+        return switch_aspect_ratio_tool.invoke({
+            'video_path': video_path,
+            'aspect_ratio': aspect_ratio,
             'method': method,
             'target_resolution': target_resolution
         })
