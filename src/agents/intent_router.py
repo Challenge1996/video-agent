@@ -218,7 +218,11 @@ class ToolExecutor:
         start_time = time.time()
         
         try:
-            if asyncio.iscoroutinefunction(tool_func):
+            if hasattr(tool_func, 'ainvoke'):
+                result = await tool_func.ainvoke(parameters)
+            elif hasattr(tool_func, 'invoke'):
+                result = tool_func.invoke(parameters)
+            elif asyncio.iscoroutinefunction(tool_func):
                 result = await tool_func(**parameters)
             else:
                 result = tool_func(**parameters)

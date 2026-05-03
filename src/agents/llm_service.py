@@ -218,18 +218,68 @@ class MiniMaxAnthropicService(BaseLLMService):
         
         return system_prompt, chat_messages
 
+    def _convert_langchain_tool_to_anthropic(
+        self, 
+        langchain_tool
+    ) -> Dict[str, Any]:
+        """将 LangChain StructuredTool 转换为 Anthropic 工具格式"""
+        name = langchain_tool.name
+        description = langchain_tool.description
+        
+        if hasattr(langchain_tool, 'get_openai_tool'):
+            openai_tool = langchain_tool.get_openai_tool()
+            func = openai_tool.get('function', {})
+            return {
+                "name": func.get('name', name),
+                "description": func.get('description', description),
+                "input_schema": func.get('parameters', {})
+            }
+        
+        input_schema = {}
+        if hasattr(langchain_tool, 'args_schema'):
+            if hasattr(langchain_tool.args_schema, 'model_json_schema'):
+                input_schema = langchain_tool.args_schema.model_json_schema()
+        
+        return {
+            "name": name,
+            "description": description,
+            "input_schema": input_schema
+        }
+
+    def _parse_anthropic_tool_calls(
+        self, 
+        response_content: List[Any]
+    ) -> List[Dict[str, Any]]:
+        """解析 Anthropic 响应中的 tool_use blocks"""
+        tool_calls = []
+        
+        if not response_content:
+            return tool_calls
+        
+        for block in response_content:
+            if hasattr(block, 'type'):
+                block_type = getattr(block, 'type', None)
+                if block_type == "tool_use":
+                    tool_id = getattr(block, 'id', None)
+                    tool_name = getattr(block, 'name', None)
+                    tool_input = getattr(block, 'input', {})
+                    
+                    if tool_name:
+                        tool_calls.append({
+                            "name": tool_name,
+                            "args": tool_input,
+                            "id": tool_id
+                        })
+        
+        return tool_calls
+
     def _parse_anthropic_response(self, response: Any) -> LLMResponse:
         """
-        解析 Anthropic 响应，支持 thinking 模式。
-        
-        响应格式示例：
-        {
-            "thinking": "思考过程...",
-            "text": "最终文本..."
-        }
+        解析 Anthropic 响应，支持 thinking 模式和 tool calling。
         """
         thinking: Optional[str] = None
         content = ""
+        tool_calls = []
         
         if hasattr(response, 'content') and response.content:
             for block in response.content:
@@ -243,6 +293,11 @@ class MiniMaxAnthropicService(BaseLLMService):
                         text_value = getattr(block, 'text', "")
                         if text_value and isinstance(text_value, str):
                             content += text_value
+                    elif block_type == "tool_use":
+                        pass
+        
+        if hasattr(response, 'content') and response.content:
+            tool_calls = self._parse_anthropic_tool_calls(response.content)
         
         if not content:
             text_attr = getattr(response, 'text', None)
@@ -264,13 +319,13 @@ class MiniMaxAnthropicService(BaseLLMService):
             raw_response=response,
             finish_reason=finish_reason,
             thinking=thinking,
-            tool_calls=[],
+            tool_calls=tool_calls if tool_calls else None,
         )
 
     async def chat(
         self,
         messages: List[BaseMessage],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[Any]] = None,
         **kwargs
     ) -> LLMResponse:
         client = self.get_model()
@@ -290,7 +345,13 @@ class MiniMaxAnthropicService(BaseLLMService):
             create_kwargs["temperature"] = self.config.temperature
         
         if tools:
-            pass
+            anthropic_tools = []
+            for tool in tools:
+                anthropic_tool = self._convert_langchain_tool_to_anthropic(tool)
+                anthropic_tools.append(anthropic_tool)
+            
+            if anthropic_tools:
+                create_kwargs["tools"] = anthropic_tools
         
         try:
             response = client.messages.create(**create_kwargs)
